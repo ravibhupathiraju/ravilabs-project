@@ -18,29 +18,42 @@ def parse_duration(text: str) -> int:
     return n * 30 if unit == "m" else n * 365
 
 
+OHLCV = ["Open", "High", "Low", "Close", "Volume"]
+
+
 def load_history(ticker: str, days: int = 730) -> pd.DataFrame:
     """Download daily OHLCV history going `days` back and attach indicators.
+
+    Uses yf.Ticker().history(), which always returns flat single-level
+    columns and is safe to call from worker threads (yf.download can return
+    duplicated/MultiIndex columns under concurrency).
 
     Returns an empty DataFrame when the ticker cannot be fetched, so callers
     can skip it gracefully.
     """
     start = (pd.Timestamp.today() - pd.Timedelta(days=days)).date()
     try:
-        df = yf.download(
-            ticker,
+        df = yf.Ticker(ticker).history(
             start=str(start),
             interval="1d",
             auto_adjust=True,
-            progress=False,
         )
     except Exception as exc:  # network / bad ticker
         print(f"  ! failed to fetch {ticker}: {exc}")
         return pd.DataFrame()
     if df is None or df.empty:
+        print(f"  ! no price data for {ticker}; skipped")
         return pd.DataFrame()
-    # yfinance may return MultiIndex columns for single tickers.
+    # Defensive normalization: flatten any MultiIndex and drop duplicates.
     if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
+        level = 0 if "Close" in df.columns.get_level_values(0) else -1
+        df.columns = df.columns.get_level_values(level)
+    df = df.loc[:, ~df.columns.duplicated()]
+    missing = [c for c in OHLCV if c not in df.columns]
+    if missing:
+        print(f"  ! {ticker} missing columns {missing}; skipped")
+        return pd.DataFrame()
+    df = df[OHLCV]
     # Normalize to tz-naive index so date comparisons are safe.
     if getattr(df.index, "tz", None) is not None:
         df.index = df.index.tz_localize(None)
