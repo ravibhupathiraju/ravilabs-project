@@ -342,10 +342,33 @@ function renderZ(data) {
     }
     const pf = r.profit_factor === null ? "\u221e" : r.profit_factor.toFixed(2);
     tr.innerHTML =
-      `<td>${r.strategy}</td><td>${r.symbol}</td><td>${r.trades}</td>` +
+      `<td style="cursor:pointer" title="Click to show the individual trades">\u2795 ${r.strategy}</td><td>${r.symbol}</td><td>${r.trades}</td>` +
       `<td>${r.win_rate.toFixed(1)}%</td><td>${r.avg_win.toFixed(2)}%</td>` +
       `<td>${r.avg_loss.toFixed(2)}%</td><td>${r.expectancy.toFixed(2)}%</td><td>${pf}</td>`;
     tbody.appendChild(tr);
+
+    // Expandable per-trade detail row
+    const detail = document.createElement("tr");
+    detail.style.display = "none";
+    const tradeRows = (r.trades_detail || [])
+      .map(
+        (t) =>
+          `<tr><td>${t.date}</td><td>${t.direction}</td><td>${t.entry_time}</td>` +
+          `<td>${t.entry_price.toFixed(2)}</td><td>${t.exit_time}</td><td>${t.exit_price.toFixed(2)}</td>` +
+          `<td style="color:${t.pnl_pct > 0 ? "#38c793" : "#e5534b"}">${t.pnl_pct.toFixed(2)}%</td></tr>`
+      )
+      .join("");
+    detail.innerHTML =
+      `<td colspan="8"><table style="margin:0.25rem 0 0.75rem">` +
+      `<thead><tr><th>Date</th><th>Direction</th><th>Entry time</th><th>Entry price</th><th>Exit time</th><th>Exit price</th><th>PnL</th></tr></thead>` +
+      `<tbody>${tradeRows}</tbody></table></td>`;
+    tbody.appendChild(detail);
+    tr.cells[0].addEventListener("click", () => {
+      const open = detail.style.display !== "none";
+      detail.style.display = open ? "none" : "table-row";
+      tr.cells[0].innerHTML = (open ? "\u2795 " : "\u2796 ") + r.strategy;
+    });
+
     const a = (agg[r.strategy] ||= { trades: 0, wins: 0, exp: 0 });
     a.trades += r.trades;
     a.wins += (r.win_rate * r.trades) / 100;

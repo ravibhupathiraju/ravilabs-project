@@ -26,7 +26,7 @@ and the straddle proxy use daily bars and work for any date range. True
 DataShop). All trades open and close the same session.
 """
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import pandas as pd
 import yfinance as yf
@@ -46,6 +46,10 @@ class DayTrade:
     symbol: str
     date: str
     direction: str
+    entry_time: str
+    entry_price: float
+    exit_time: str
+    exit_price: float
     pnl_pct: float
 
 
@@ -121,13 +125,14 @@ def load_intraday(yf_symbol: str, start: pd.Timestamp, end: pd.Timestamp):
     return df.dropna(subset=["Close"]), clipped
 
 
-# --- Intraday strategies: take one session of 5m bars, return (direction, pnl%) or None ---
+# --- Intraday strategies: take one session of 5m bars (DatetimeIndex kept),
+# return a dict of trade details or None ---
 
 def _orb15(bars: pd.DataFrame):
     if len(bars) < 12:
         return None
-    orh = bars["High"].iloc[:3].max()  # first 15 minutes = 3 x 5m bars
-    orl = bars["Low"].iloc[:3].min()
+    orh = float(bars["High"].iloc[:3].max())  # first 15 minutes = 3 x 5m bars
+    orl = float(bars["Low"].iloc[:3].min())
     direction = entry = entry_i = stop = None
     for i in range(3, len(bars)):
         c = float(bars["Close"].iloc[i])
@@ -139,16 +144,22 @@ def _orb15(bars: pd.DataFrame):
             break
     if direction is None:
         return None
-    exit_price = float(bars["Close"].iloc[-1])  # default: exit at the close
+    exit_i, exit_price = len(bars) - 1, float(bars["Close"].iloc[-1])
     for j in range(entry_i + 1, len(bars)):
         if direction == 1 and float(bars["Low"].iloc[j]) <= stop:
-            exit_price = stop
+            exit_i, exit_price = j, stop
             break
         if direction == -1 and float(bars["High"].iloc[j]) >= stop:
-            exit_price = stop
+            exit_i, exit_price = j, stop
             break
-    pnl = direction * (exit_price - entry) / entry * 100.0
-    return ("long" if direction == 1 else "short", pnl)
+    return {
+        "direction": "long" if direction == 1 else "short",
+        "entry_time": bars.index[entry_i].strftime("%H:%M"),
+        "entry_price": entry,
+        "exit_time": bars.index[exit_i].strftime("%H:%M"),
+        "exit_price": exit_price,
+        "pnl_pct": direction * (exit_price - entry) / entry * 100.0,
+    }
 
 
 def _vwap_reversion(bars: pd.DataFrame):
@@ -172,16 +183,22 @@ def _vwap_reversion(bars: pd.DataFrame):
             break
     if direction is None:
         return None
-    exit_price = float(bars["Close"].iloc[-1])  # default: exit at the close
+    exit_i, exit_price = len(bars) - 1, float(bars["Close"].iloc[-1])
     for j in range(entry_i + 1, len(bars)):
         c = float(bars["Close"].iloc[j])
         if (direction == 1 and c >= float(vwap.iloc[j])) or (
             direction == -1 and c <= float(vwap.iloc[j])
         ):
-            exit_price = c
+            exit_i, exit_price = j, c
             break
-    pnl = direction * (exit_price - entry) / entry * 100.0
-    return ("long" if direction == 1 else "short", pnl)
+    return {
+        "direction": "long" if direction == 1 else "short",
+        "entry_time": bars.index[entry_i].strftime("%H:%M"),
+        "entry_price": entry,
+        "exit_time": bars.index[exit_i].strftime("%H:%M"),
+        "exit_price": exit_price,
+        "pnl_pct": direction * (exit_price - entry) / entry * 100.0,
+    }
 
 
 def _momentum30(bars: pd.DataFrame):
@@ -193,8 +210,14 @@ def _momentum30(bars: pd.DataFrame):
     direction = 1 if first30 > 0 else -1
     entry = float(bars["Close"].iloc[5])
     exit_price = float(bars["Close"].iloc[-1])
-    pnl = direction * (exit_price - entry) / entry * 100.0
-    return ("long" if direction == 1 else "short", pnl)
+    return {
+        "direction": "long" if direction == 1 else "short",
+        "entry_time": bars.index[5].strftime("%H:%M"),
+        "entry_price": entry,
+        "exit_time": bars.index[-1].strftime("%H:%M"),
+        "exit_price": exit_price,
+        "pnl_pct": direction * (exit_price - entry) / entry * 100.0,
+    }
 
 
 INTRADAY = {
@@ -213,7 +236,6 @@ def _gap_fade(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
     trades = []
     prev_close = daily["Close"].shift(1)
     gap = daily["Open"] / prev_close - 1.0
-    day_ret = daily["Close"] / daily["Open"] - 1.0
     for ts in daily.index:
         if ts < start or ts > end:
             continue
@@ -221,10 +243,20 @@ def _gap_fade(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
         if pd.isna(g) or abs(g) < GAP_THRESHOLD:
             continue
         direction = -1 if g > 0 else 1
-        pnl = float(direction * day_ret.loc[ts] * 100.0)
+        o, c = float(daily["Open"].loc[ts]), float(daily["Close"].loc[ts])
+        pnl = direction * (c - o) / o * 100.0
         trades.append(
-            DayTrade(DAILY_LABELS["gapfade"], symbol, str(ts.date()),
-                     "short" if direction == -1 else "long", pnl)
+            DayTrade(
+                strategy=DAILY_LABELS["gapfade"],
+                symbol=symbol,
+                date=str(ts.date()),
+                direction="short" if direction == -1 else "long",
+                entry_time="09:30 (open)",
+                entry_price=o,
+                exit_time="16:00 (close)",
+                exit_price=c,
+                pnl_pct=pnl,
+            )
         )
     return trades
 
@@ -232,16 +264,27 @@ def _gap_fade(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
 def _straddle_sell(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
     trades = []
     sigma = daily["Close"].pct_change().rolling(20).std().shift(1)  # known at open
-    move = (daily["Close"] / daily["Open"] - 1.0).abs()
     for ts in daily.index:
         if ts < start or ts > end:
             continue
         s = sigma.loc[ts]
         if pd.isna(s):
             continue
-        pnl = float((STRADDLE_PREMIUM_MULT * s - move.loc[ts]) * 100.0)
+        o, c = float(daily["Open"].loc[ts]), float(daily["Close"].loc[ts])
+        move = abs(c / o - 1.0)
+        pnl = float((STRADDLE_PREMIUM_MULT * s - move) * 100.0)
         trades.append(
-            DayTrade(DAILY_LABELS["straddle"], symbol, str(ts.date()), "short_vol", pnl)
+            DayTrade(
+                strategy=DAILY_LABELS["straddle"],
+                symbol=symbol,
+                date=str(ts.date()),
+                direction="short_vol",
+                entry_time="09:30 (open)",
+                entry_price=o,
+                exit_time="16:00 (close)",
+                exit_price=c,
+                pnl_pct=pnl,
+            )
         )
     return trades
 
@@ -272,13 +315,12 @@ def run(symbols: list[str], strategies: list[str], start=None, end=None) -> dict
                 )
             if not bars.empty:
                 for date, day in bars.groupby(bars.index.date):
-                    day = day.reset_index(drop=True)
                     for name in need_intraday:
                         label, func = INTRADAY[name]
                         res = func(day)
                         if res:
                             trades_by[name].append(
-                                DayTrade(label, sym, str(date), res[0], res[1])
+                                DayTrade(strategy=label, symbol=sym, date=str(date), **res)
                             )
 
         if need_daily:
@@ -294,6 +336,7 @@ def run(symbols: list[str], strategies: list[str], start=None, end=None) -> dict
             s["strategy"] = STRATEGY_LABELS[name]
             s["name"] = name
             s["symbol"] = sym
+            s["trades_detail"] = [asdict(t) for t in trades_by[name]]
             rows.append(s)
 
     rows.sort(key=lambda r: r.get("expectancy", float("-inf")), reverse=True)
