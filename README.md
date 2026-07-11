@@ -1,20 +1,22 @@
 # Swing Trade Tracker
 
-A stock screener and backtester for swing trading, built around the **RSI(2) mean-reversion pullback strategy** (popularized by Larry Connors). This strategy historically shows a high win rate (~70-80%) on liquid, trending large-cap stocks because it buys short-term oversold dips inside long-term uptrends.
+A multi-strategy stock screener, backtester, and comparison dashboard for swing trading. Six classic swing strategies run behind a common interface so their results are directly comparable, and all trading around earnings dates is excluded.
 
-## Strategy Rules
+## Strategies
 
-**Entry (long):**
-1. Close > 200-day SMA (only trade stocks in long-term uptrends)
-2. RSI(2) < 10 (deep short-term oversold pullback)
-3. Close < 5-day SMA (price is stretched below its short-term mean)
-4. Liquidity filter: price > $5 and 20-day avg volume > 500k shares
+| Key | Strategy | Style | Core idea |
+|---|---|---|---|
+| `rsi2` | RSI(2) Mean Reversion | Mean reversion | Buy deep RSI(2) < 10 pullbacks above the 200-day SMA; exit on close > SMA5 |
+| `double7` | Double 7s | Mean reversion | Buy 7-day closing lows above the 200-day SMA; exit at 7-day closing highs |
+| `bollinger` | Bollinger Snapback | Mean reversion | Buy closes below the lower band in uptrends; exit at the middle band |
+| `pullback20` | SMA20 Trend Pullback | Trend pullback | Buy tags of the 20-day SMA in strong trends; 3x ATR target, 1.5x ATR stop |
+| `breakout20` | 20-Day Breakout | Momentum | Buy new 20-day highs on 1.5x volume; exit below the 10-day low |
+| `macd` | MACD Trend Cross | Trend following | Buy MACD bullish crosses above the 200-day SMA; exit on bearish cross |
 
-**Exit:**
-- Close > 5-day SMA (mean reversion complete), or
-- RSI(2) > 70, or
-- Hard stop: entry price - 2 x ATR(14), or
-- Time stop: 10 trading days
+Every strategy shares:
+- **Liquidity filter**: price > $5, 20-day average volume > 500k shares
+- **ATR hard stop** fixed at entry, plus a **time stop**
+- **Earnings exclusion**: no entries within +/- N days of an earnings date (default 3), and open positions are closed before an earnings window starts
 
 ## Install
 
@@ -24,23 +26,34 @@ pip install -r requirements.txt
 
 ## Usage
 
-Scan the default watchlist for buy signals today:
+Build the strategy comparison dashboard (backtests all six strategies and writes `dashboard.html`):
+
+```bash
+python app.py dashboard --years 5
+```
+
+Open `dashboard.html` in a browser to see trades, win rate, avg win/loss, expectancy, profit factor, avg hold, max drawdown, exit-reason breakdown, and comparison charts per strategy.
+
+Scan the watchlist for buy signals today (all strategies, earnings-filtered):
 
 ```bash
 python app.py scan
+python app.py scan --strategy rsi2 --tickers AAPL MSFT NVDA
 ```
 
-Scan specific tickers:
+Backtest in the terminal:
 
 ```bash
-python app.py scan --tickers AAPL MSFT NVDA
+python app.py backtest --years 5
+python app.py backtest --strategy breakout20 --earnings-buffer 5
 ```
 
-Backtest the strategy to verify the win rate:
+## Backtest methodology
 
-```bash
-python app.py backtest --tickers AAPL MSFT NVDA --years 5
-```
+- Signals on day T's close are filled at day T+1's open (no look-ahead bias)
+- Stops and ATR profit targets are fixed at entry and fill at their price; other exits fill at the close
+- One position at a time per ticker per strategy
+- Earnings dates come from Yahoo Finance; when unavailable for a ticker, the filter is skipped with a printed note
 
 ## Disclaimer
 
