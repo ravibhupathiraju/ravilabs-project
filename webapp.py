@@ -9,7 +9,7 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import backtest, screener
+from swingtrader import backtest, screener, zerodte
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
@@ -94,6 +94,23 @@ def api_scan():
     buffer_days = int(payload.get("earnings_buffer", 3))
     signals = screener.scan(tickers, strategies, earnings_buffer=buffer_days)
     return jsonify({"signals": signals, "tickers_used": len(tickers)})
+
+
+@app.post("/api/zerodte")
+def api_zerodte():
+    payload = request.get_json(force=True)
+    symbols = payload.get("symbols") or list(zerodte.SYMBOLS)
+    strategies = payload.get("strategies") or list(zerodte.STRATEGY_LABELS)
+    try:
+        data = zerodte.run(
+            symbols,
+            strategies,
+            start=payload.get("start") or None,
+            end=payload.get("end") or None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(data)
 
 
 if __name__ == "__main__":

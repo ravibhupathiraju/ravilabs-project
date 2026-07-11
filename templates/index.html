@@ -9,6 +9,9 @@ body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem 
 h1 { margin-bottom: 0.2rem; }
 h3 { margin-top: 2rem; }
 .meta { color: #9aa3b5; margin-top: 0; }
+.tabs { display: flex; gap: 0.5rem; margin: 1.25rem 0; }
+.tab { background: #171f30; color: #9aa3b5; border: 1px solid #263042; border-radius: 8px 8px 0 0; padding: 10px 18px; cursor: pointer; font-size: 0.95rem; }
+.tab.active { background: #4f8ef7; color: #fff; border-color: #4f8ef7; }
 .card { background: #171f30; border-radius: 10px; padding: 1.25rem; }
 .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
 .field { display: flex; flex-direction: column; gap: 0.35rem; }
@@ -18,10 +21,10 @@ select, input, textarea { background: #0f1420; color: #e6e9f0; border: 1px solid
 .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
 .check { color: #e6e9f0; font-size: 0.9rem; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4rem; }
 .actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
-button { background: #4f8ef7; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; }
+button.run { background: #4f8ef7; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; }
 button.secondary { background: #263042; }
 button:disabled { opacity: 0.5; cursor: wait; }
-#status { color: #f0b429; font-size: 0.9rem; }
+.status { color: #f0b429; font-size: 0.9rem; }
 table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
 th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #263042; }
 th:first-child, td:first-child { text-align: left; }
@@ -29,12 +32,20 @@ td:first-child { font-weight: 600; }
 th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
 .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 1.5rem 0; }
 .note { color: #9aa3b5; font-size: 0.85rem; }
+.warn { color: #f0b429; font-size: 0.85rem; }
 </style>
 </head>
 <body>
 <h1>Swing Trade Tracker</h1>
 <p class="meta">Multi-strategy backtesting and scanning with earnings exclusion</p>
 
+<div class="tabs">
+  <button class="tab active" data-tab="swingTab">Swing strategies</button>
+  <button class="tab" data-tab="zdteTab">0DTE intraday</button>
+</div>
+
+<!-- ============ SWING TAB ============ -->
+<div id="swingTab">
 <div class="card controls">
   <div class="field">
     <label for="duration">Duration</label>
@@ -81,9 +92,9 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
     </div>
   </div>
   <div class="actions">
-    <button id="runBtn">Run backtest</button>
-    <button id="scanBtn" class="secondary">Scan today</button>
-    <span id="status"></span>
+    <button class="run" id="runBtn">Run backtest</button>
+    <button class="run secondary" id="scanBtn">Scan today</button>
+    <span class="status" id="status"></span>
   </div>
 </div>
 
@@ -112,16 +123,113 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
     <tbody id="scanBody"></tbody>
   </table>
 </div>
+</div>
+
+<!-- ============ 0DTE TAB ============ -->
+<div id="zdteTab" style="display:none">
+<div class="card controls">
+  <div class="field">
+    <label for="zStart">Start date</label>
+    <input type="date" id="zStart">
+  </div>
+  <div class="field">
+    <label for="zEnd">End date</label>
+    <input type="date" id="zEnd">
+  </div>
+  <div class="field wide">
+    <label>Symbols</label>
+    <div class="checks">
+      <label class="check"><input type="checkbox" name="zsym" value="SPY" checked> SPY</label>
+      <label class="check"><input type="checkbox" name="zsym" value="SPX" checked> SPX</label>
+      <label class="check"><input type="checkbox" name="zsym" value="QQQ" checked> QQQ</label>
+      <label class="check"><input type="checkbox" name="zsym" value="IWM" checked> IWM</label>
+    </div>
+  </div>
+  <div class="field wide">
+    <label>Strategies</label>
+    <div class="checks">
+      <label class="check" title="Trade the break of the first 15 minutes; stop at the opposite side of the range; exit by the close (Zarattini & Aziz 2023)."><input type="checkbox" name="zstrat" value="orb15" checked> ORB 15-min Breakout</label>
+      <label class="check" title="Fade a 0.3%+ stretch from session VWAP back to VWAP; exit at VWAP touch or the close."><input type="checkbox" name="zstrat" value="vwap" checked> VWAP Reversion</label>
+      <label class="check" title="Direction of the first 30 minutes persists into the close (Gao, Han, Li & Zhou 2018). Enter at 10:00, exit at close."><input type="checkbox" name="zstrat" value="momentum30" checked> First 30-min Momentum</label>
+      <label class="check" title="Fade overnight gaps larger than 0.3% toward the prior close; exit at the close. Uses daily data, works for any date range."><input type="checkbox" name="zstrat" value="gapfade" checked> Gap Fade</label>
+      <label class="check" title="Proxy for the classic 0DTE premium sell: short an ATM straddle priced at 0.8x the 20-day 1-sigma move; PnL = premium - |open-to-close move|. Uses daily data, works for any date range."><input type="checkbox" name="zstrat" value="straddle" checked> Expected-Move Straddle Sell (proxy)</label>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="run" id="zRunBtn">Run 0DTE backtest</button>
+    <span class="status" id="zStatus"></span>
+  </div>
+</div>
+
+<div id="zResults" style="display:none">
+  <h3>0DTE results <span id="zMeta" class="meta"></span></h3>
+  <div id="zNotes"></div>
+  <table>
+    <thead><tr><th>Strategy</th><th>Symbol</th><th>Trades</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th><th>Expectancy</th><th>Profit factor</th></tr></thead>
+    <tbody id="zBody"></tbody>
+  </table>
+  <div class="charts">
+    <div class="card"><canvas id="zwr"></canvas></div>
+    <div class="card"><canvas id="zex"></canvas></div>
+  </div>
+  <p class="note">All trades open and close the same session. PnL is in % of the underlying move; the straddle sell is a volatility proxy, not real option prices (true 0DTE options backtests require paid historical options data). Intraday strategies (ORB, VWAP, Momentum) are limited to ~60 days of free 5-minute data; Gap Fade and the straddle proxy work for any date range. Educational use only; not financial advice.</p>
+</div>
+</div>
 
 <script>
 const $ = (id) => document.getElementById(id);
-let wrChart, exChart;
+let wrChart, exChart, zwrChart, zexChart;
 
+// --- Tabs ---
+document.querySelectorAll(".tab").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    ["swingTab", "zdteTab"].forEach((id) => ($(id).style.display = "none"));
+    $(btn.dataset.tab).style.display = "block";
+  })
+);
+
+// --- Shared fetch helper ---
+async function callApi(path, body, statusEl, btns) {
+  btns.forEach((b) => (b.disabled = true));
+  statusEl.textContent = "Running... this can take a minute.";
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "request failed");
+    statusEl.textContent = "";
+    return data;
+  } catch (err) {
+    statusEl.textContent = "Error: " + err.message;
+    return null;
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+
+function barChart(canvas, labels, values, text, color) {
+  return new Chart(canvas, {
+    type: "bar",
+    data: { labels, datasets: [{ data: values, backgroundColor: color }] },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false }, title: { display: true, text, color: "#e6e9f0" } },
+      scales: { x: { ticks: { color: "#9aa3b5" } }, y: { ticks: { color: "#9aa3b5" } } },
+    },
+  });
+}
+
+// ================= SWING TAB =================
 $("universe").addEventListener("change", () => {
   $("customBox").style.display = $("universe").value === "custom" ? "flex" : "none";
 });
 
-function payload() {
+function swingPayload() {
   return {
     duration: $("duration").value,
     universe: $("universe").value,
@@ -132,35 +240,13 @@ function payload() {
   };
 }
 
-async function call(path) {
-  const btns = [$("runBtn"), $("scanBtn")];
-  btns.forEach((b) => (b.disabled = true));
-  $("status").textContent = "Running... large universes can take a few minutes.";
-  try {
-    const res = await fetch(path, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload()),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "request failed");
-    $("status").textContent = "";
-    return data;
-  } catch (err) {
-    $("status").textContent = "Error: " + err.message;
-    return null;
-  } finally {
-    btns.forEach((b) => (b.disabled = false));
-  }
-}
-
 $("runBtn").addEventListener("click", async () => {
-  const data = await call("/api/backtest");
+  const data = await callApi("/api/backtest", swingPayload(), $("status"), [$("runBtn"), $("scanBtn")]);
   if (data) renderBacktest(data);
 });
 
 $("scanBtn").addEventListener("click", async () => {
-  const data = await call("/api/scan");
+  const data = await callApi("/api/scan", swingPayload(), $("status"), [$("runBtn"), $("scanBtn")]);
   if (data) renderScan(data);
 });
 
@@ -194,27 +280,10 @@ function renderBacktest(data) {
     rtr.innerHTML = `<td>${s.strategy}</td><td>${parts.join(", ")}</td>`;
     reasons.appendChild(rtr);
   }
-  drawCharts(labels, wr, ex);
-}
-
-function drawCharts(labels, wr, ex) {
   if (wrChart) wrChart.destroy();
   if (exChart) exChart.destroy();
-  const common = {
-    responsive: true,
-    plugins: { legend: { display: false } },
-    scales: { x: { ticks: { color: "#9aa3b5" } }, y: { ticks: { color: "#9aa3b5" } } },
-  };
-  wrChart = new Chart($("wr"), {
-    type: "bar",
-    data: { labels, datasets: [{ data: wr, backgroundColor: "#4f8ef7" }] },
-    options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Win rate (%)", color: "#e6e9f0" } } },
-  });
-  exChart = new Chart($("ex"), {
-    type: "bar",
-    data: { labels, datasets: [{ data: ex, backgroundColor: "#38c793" }] },
-    options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Expectancy per trade (%)", color: "#e6e9f0" } } },
-  });
+  wrChart = barChart($("wr"), labels, wr, "Win rate (%)", "#4f8ef7");
+  exChart = barChart($("ex"), labels, ex, "Expectancy per trade (%)", "#38c793");
 }
 
 function renderScan(data) {
@@ -231,6 +300,64 @@ function renderScan(data) {
     tr.innerHTML = `<td>${s.ticker}</td><td>${s.strategy}</td><td>${s.date}</td><td>${s.close.toFixed(2)}</td><td>${s.stop.toFixed(2)}</td>`;
     tbody.appendChild(tr);
   }
+}
+
+// ================= 0DTE TAB =================
+(function initDates() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 30);
+  $("zEnd").valueAsDate = end;
+  $("zStart").valueAsDate = start;
+})();
+
+$("zRunBtn").addEventListener("click", async () => {
+  const body = {
+    symbols: [...document.querySelectorAll("input[name=zsym]:checked")].map((c) => c.value),
+    strategies: [...document.querySelectorAll("input[name=zstrat]:checked")].map((c) => c.value),
+    start: $("zStart").value,
+    end: $("zEnd").value,
+  };
+  if (!body.symbols.length) {
+    $("zStatus").textContent = "Error: select at least one symbol";
+    return;
+  }
+  const data = await callApi("/api/zerodte", body, $("zStatus"), [$("zRunBtn")]);
+  if (data) renderZ(data);
+});
+
+function renderZ(data) {
+  $("zResults").style.display = "block";
+  $("zMeta").textContent = `(${data.start} to ${data.end})`;
+  $("zNotes").innerHTML = (data.notes || []).map((n) => `<p class="warn">\u26a0 ${n}</p>`).join("");
+  const tbody = $("zBody");
+  tbody.innerHTML = "";
+  const agg = {};
+  for (const r of data.rows) {
+    const tr = document.createElement("tr");
+    if (!r.trades) {
+      tr.innerHTML = `<td>${r.strategy}</td><td>${r.symbol}</td><td colspan="6">no trades</td>`;
+      tbody.appendChild(tr);
+      continue;
+    }
+    const pf = r.profit_factor === null ? "\u221e" : r.profit_factor.toFixed(2);
+    tr.innerHTML =
+      `<td>${r.strategy}</td><td>${r.symbol}</td><td>${r.trades}</td>` +
+      `<td>${r.win_rate.toFixed(1)}%</td><td>${r.avg_win.toFixed(2)}%</td>` +
+      `<td>${r.avg_loss.toFixed(2)}%</td><td>${r.expectancy.toFixed(2)}%</td><td>${pf}</td>`;
+    tbody.appendChild(tr);
+    const a = (agg[r.strategy] ||= { trades: 0, wins: 0, exp: 0 });
+    a.trades += r.trades;
+    a.wins += (r.win_rate * r.trades) / 100;
+    a.exp += r.expectancy * r.trades;
+  }
+  const labels = Object.keys(agg);
+  const wr = labels.map((l) => +((agg[l].wins / agg[l].trades) * 100).toFixed(1));
+  const ex = labels.map((l) => +(agg[l].exp / agg[l].trades).toFixed(2));
+  if (zwrChart) zwrChart.destroy();
+  if (zexChart) zexChart.destroy();
+  zwrChart = barChart($("zwr"), labels, wr, "Win rate by strategy, all symbols (%)", "#4f8ef7");
+  zexChart = barChart($("zex"), labels, ex, "Expectancy per trade, all symbols (%)", "#38c793");
 }
 </script>
 </body>

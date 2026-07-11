@@ -48,6 +48,20 @@ python app.py backtest --duration 6m --strategy rsi2
 python app.py dashboard --duration 5y   # writes static dashboard.html
 ```
 
+## 0DTE intraday tab
+
+A second tab backtests five same-day (open and close the same session) strategies on **SPY, SPX (^GSPC), QQQ, IWM** over any calendar date range you pick:
+
+| Strategy | Idea | Data |
+|---|---|---|
+| ORB 15-min Breakout | Trade the break of the first 15 minutes, stop at the other side of the range, exit by the close (Zarattini & Aziz, 2023) | 5-min bars |
+| First 30-min Momentum | The first half hour's direction persists into the close (Gao, Han, Li & Zhou, 2018); enter 10:00, exit at close | 5-min bars |
+| VWAP Reversion | Fade 0.3%+ stretches from session VWAP back to VWAP | 5-min bars |
+| Gap Fade | Fade overnight gaps > 0.3% toward the prior close; exit at close | Daily bars |
+| Expected-Move Straddle Sell (proxy) | The classic 0DTE premium sell: short an ATM straddle priced at 0.8x the 20-day 1-sigma move; PnL = premium - abs(open-to-close move) | Daily bars |
+
+**Limitations to know:** free 5-minute data (yfinance) only covers ~60 days, so the three intraday strategies clip older date ranges (the UI warns when this happens). Gap Fade and the straddle proxy use daily bars and work for any range. The straddle sell is a volatility proxy in % of the underlying, not real option prices; true 0DTE options backtests require paid historical options data (for example CBOE DataShop).
+
 ## Backtest methodology
 
 - Signals on day T's close are filled at day T+1's open (no look-ahead bias)
