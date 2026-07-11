@@ -1,15 +1,17 @@
 """Swing Trade Tracker CLI.
 
+The web UI (python webapp.py) is the primary interface; this CLI mirrors it.
+
 Commands:
   scan       Screen a watchlist for buy signals across strategies today.
   backtest   Backtest strategies and print results per strategy.
-  dashboard  Backtest all strategies and build an HTML comparison dashboard.
+  dashboard  Backtest all strategies and write a static HTML dashboard file.
 """
 
 import argparse
 
 from swingtrader import backtest, dashboard, screener
-from swingtrader.data import read_watchlist
+from swingtrader.data import parse_duration, read_watchlist
 from swingtrader.strategies import STRATEGIES
 
 
@@ -48,11 +50,11 @@ def main() -> None:
 
     p_bt = sub.add_parser("backtest", help="backtest strategies and print results")
     _add_common(p_bt)
-    p_bt.add_argument("--years", type=int, default=5, help="years of history (default: 5)")
+    p_bt.add_argument("--duration", default="5y", help="window, e.g. 1m, 6m, 2y (default: 5y)")
 
-    p_dash = sub.add_parser("dashboard", help="backtest all strategies and build an HTML dashboard")
+    p_dash = sub.add_parser("dashboard", help="backtest all strategies and write dashboard.html")
     _add_common(p_dash)
-    p_dash.add_argument("--years", type=int, default=5, help="years of history (default: 5)")
+    p_dash.add_argument("--duration", default="5y", help="window, e.g. 1m, 6m, 2y (default: 5y)")
     p_dash.add_argument("--output", default="dashboard.html")
 
     args = parser.parse_args()
@@ -65,12 +67,13 @@ def main() -> None:
         screener.print_signals(signals)
         return
 
+    duration_days = parse_duration(args.duration)
     print(
         f"Backtesting {len(strategies)} strategies over {len(tickers)} tickers, "
-        f"{args.years} years, earnings buffer +/-{args.earnings_buffer} days...\n"
+        f"{args.duration}, earnings buffer +/-{args.earnings_buffer} days...\n"
     )
     results = backtest.run_all(
-        tickers, strategies, years=args.years, earnings_buffer=args.earnings_buffer
+        tickers, strategies, duration_days=duration_days, earnings_buffer=args.earnings_buffer
     )
     for res in results.values():
         print(f"\n=== {res.strategy} ===")
@@ -78,7 +81,7 @@ def main() -> None:
 
     if args.command == "dashboard":
         meta = (
-            f"{len(tickers)} tickers | {args.years} years | "
+            f"{len(tickers)} tickers | {args.duration} | "
             f"earnings buffer +/-{args.earnings_buffer} days"
         )
         path = dashboard.generate(results, path=args.output, meta=meta)

@@ -1,39 +1,47 @@
-"""Scan a watchlist for stocks triggering any strategy's buy signal today."""
+"""Scan tickers for stocks triggering any strategy's buy signal today."""
+
+from concurrent.futures import ThreadPoolExecutor
 
 from .data import load_history
 from .earnings import earnings_dates, near_earnings
 from .strategies import Strategy
 
+HISTORY_DAYS = 420  # enough calendar days for 200-day SMA warmup
+
+
+def _load(ticker: str):
+    df = load_history(ticker, days=HISTORY_DAYS)
+    edates = earnings_dates(ticker) if not df.empty else []
+    return ticker, df, edates
+
 
 def scan(
     tickers: list[str],
     strategies: list[Strategy],
-    years: int = 2,
     earnings_buffer: int = 3,
+    max_workers: int = 8,
 ) -> list[dict]:
     """Return today's buy signals across all strategies, earnings-filtered."""
     signals: list[dict] = []
-    for ticker in tickers:
-        df = load_history(ticker, years=years)
-        if df.empty:
-            continue
-        row = df.iloc[-1]
-        date = df.index[-1]
-        edates = earnings_dates(ticker)
-        if near_earnings(date, edates, earnings_buffer):
-            print(f"  - {ticker}: skipped (within earnings window)")
-            continue
-        for s in strategies:
-            if s.entry(row):
-                signals.append(
-                    {
-                        "ticker": ticker,
-                        "strategy": s.label,
-                        "date": str(date.date()),
-                        "close": float(row["Close"]),
-                        "stop": s.stop_price(row),
-                    }
-                )
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for ticker, df, edates in pool.map(_load, tickers):
+            if df.empty:
+                continue
+            row = df.iloc[-1]
+            date = df.index[-1]
+            if near_earnings(date, edates, earnings_buffer):
+                continue
+            for s in strategies:
+                if s.entry(row):
+                    signals.append(
+                        {
+                            "ticker": ticker,
+                            "strategy": s.label,
+                            "date": str(date.date()),
+                            "close": float(row["Close"]),
+                            "stop": s.stop_price(row),
+                        }
+                    )
     signals.sort(key=lambda s: (s["strategy"], s["ticker"]))
     return signals
 

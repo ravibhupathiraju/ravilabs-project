@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Swing Trade Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; background: #0f1420; color: #e6e9f0; }
+h1 { margin-bottom: 0.2rem; }
+h3 { margin-top: 2rem; }
+.meta { color: #9aa3b5; margin-top: 0; }
+.card { background: #171f30; border-radius: 10px; padding: 1.25rem; }
+.controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.35rem; }
+.field.wide { grid-column: 1 / -1; }
+label { color: #9aa3b5; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+select, input, textarea { background: #0f1420; color: #e6e9f0; border: 1px solid #263042; border-radius: 6px; padding: 8px 10px; font-size: 0.95rem; }
+.checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+.check { color: #e6e9f0; font-size: 0.9rem; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4rem; }
+.actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
+button { background: #4f8ef7; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; }
+button.secondary { background: #263042; }
+button:disabled { opacity: 0.5; cursor: wait; }
+#status { color: #f0b429; font-size: 0.9rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #263042; }
+th:first-child, td:first-child { text-align: left; }
+td:first-child { font-weight: 600; }
+th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 1.5rem 0; }
+.note { color: #9aa3b5; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Swing Trade Tracker</h1>
+<p class="meta">Multi-strategy backtesting and scanning with earnings exclusion</p>
+
+<div class="card controls">
+  <div class="field">
+    <label for="duration">Duration</label>
+    <select id="duration">
+      <option value="1m">1 month</option>
+      <option value="2m">2 months</option>
+      <option value="3m">3 months</option>
+      <option value="6m">6 months</option>
+      <option value="1y" selected>1 year</option>
+      <option value="2y">2 years</option>
+      <option value="3y">3 years</option>
+      <option value="5y">5 years</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="universe">Ticker universe</label>
+    <select id="universe">
+      {% for u in universes %}
+      <option value="{{ u.key }}">{{ u.label }} ({{ u.count }})</option>
+      {% endfor %}
+      <option value="custom">Custom list</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="limit">Max tickers (0 = all)</label>
+    <input type="number" id="limit" value="0" min="0">
+  </div>
+  <div class="field">
+    <label for="buffer">Earnings buffer (&plusmn; days)</label>
+    <input type="number" id="buffer" value="3" min="0">
+  </div>
+  <div class="field wide" id="customBox" style="display:none">
+    <label for="tickers">Custom tickers (comma or space separated)</label>
+    <textarea id="tickers" rows="2" placeholder="AAPL MSFT NVDA ..."></textarea>
+  </div>
+  <div class="field wide">
+    <label>Strategies</label>
+    <div class="checks">
+      {% for s in strategies %}
+      <label class="check" title="{{ s.description }}">
+        <input type="checkbox" name="strategy" value="{{ s.name }}" checked> {{ s.label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="actions">
+    <button id="runBtn">Run backtest</button>
+    <button id="scanBtn" class="secondary">Scan today</button>
+    <span id="status"></span>
+  </div>
+</div>
+
+<div id="results" style="display:none">
+  <h3>Backtest results <span id="metaLine" class="meta"></span></h3>
+  <table>
+    <thead><tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th><th>Expectancy</th><th>Profit factor</th><th>Avg hold</th><th>Max DD</th></tr></thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+  <div class="charts">
+    <div class="card"><canvas id="wr"></canvas></div>
+    <div class="card"><canvas id="ex"></canvas></div>
+  </div>
+  <h3>Exit reasons</h3>
+  <table>
+    <thead><tr><th>Strategy</th><th>Exit reasons</th></tr></thead>
+    <tbody id="reasonBody"></tbody>
+  </table>
+  <p class="note">Entries are skipped and open positions closed within the earnings buffer window. Short durations (1-2 months) naturally produce few trades per strategy. Sorted by expectancy. Educational use only; not financial advice.</p>
+</div>
+
+<div id="scanResults" style="display:none">
+  <h3>Today's signals <span id="scanMeta" class="meta"></span></h3>
+  <table>
+    <thead><tr><th>Ticker</th><th>Strategy</th><th>Date</th><th>Close</th><th>Stop</th></tr></thead>
+    <tbody id="scanBody"></tbody>
+  </table>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let wrChart, exChart;
+
+$("universe").addEventListener("change", () => {
+  $("customBox").style.display = $("universe").value === "custom" ? "flex" : "none";
+});
+
+function payload() {
+  return {
+    duration: $("duration").value,
+    universe: $("universe").value,
+    tickers: $("tickers").value,
+    limit: $("limit").value,
+    earnings_buffer: $("buffer").value,
+    strategies: [...document.querySelectorAll("input[name=strategy]:checked")].map((c) => c.value),
+  };
+}
+
+async function call(path) {
+  const btns = [$("runBtn"), $("scanBtn")];
+  btns.forEach((b) => (b.disabled = true));
+  $("status").textContent = "Running... large universes can take a few minutes.";
+  try {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload()),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "request failed");
+    $("status").textContent = "";
+    return data;
+  } catch (err) {
+    $("status").textContent = "Error: " + err.message;
+    return null;
+  } finally {
+    btns.forEach((b) => (b.disabled = false));
+  }
+}
+
+$("runBtn").addEventListener("click", async () => {
+  const data = await call("/api/backtest");
+  if (data) renderBacktest(data);
+});
+
+$("scanBtn").addEventListener("click", async () => {
+  const data = await call("/api/scan");
+  if (data) renderScan(data);
+});
+
+function renderBacktest(data) {
+  $("results").style.display = "block";
+  $("metaLine").textContent = `(${data.tickers_used} tickers, ${data.duration_days} days, earnings buffer \u00b1${data.earnings_buffer}d)`;
+  const tbody = $("resultsBody");
+  const reasons = $("reasonBody");
+  tbody.innerHTML = "";
+  reasons.innerHTML = "";
+  const labels = [], wr = [], ex = [];
+  for (const s of data.results) {
+    const tr = document.createElement("tr");
+    if (!s.trades) {
+      tr.innerHTML = `<td>${s.strategy}</td><td colspan="8">no trades</td>`;
+      tbody.appendChild(tr);
+      continue;
+    }
+    const pf = s.profit_factor === null ? "\u221e" : s.profit_factor.toFixed(2);
+    tr.innerHTML =
+      `<td>${s.strategy}</td><td>${s.trades}</td><td>${s.win_rate.toFixed(1)}%</td>` +
+      `<td>${s.avg_win.toFixed(2)}%</td><td>${s.avg_loss.toFixed(2)}%</td>` +
+      `<td>${s.expectancy.toFixed(2)}%</td><td>${pf}</td>` +
+      `<td>${s.avg_hold.toFixed(1)}d</td><td>${s.max_drawdown.toFixed(1)}%</td>`;
+    tbody.appendChild(tr);
+    labels.push(s.strategy);
+    wr.push(+s.win_rate.toFixed(1));
+    ex.push(+s.expectancy.toFixed(2));
+    const rtr = document.createElement("tr");
+    const parts = Object.entries(s.exit_reasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${v}`);
+    rtr.innerHTML = `<td>${s.strategy}</td><td>${parts.join(", ")}</td>`;
+    reasons.appendChild(rtr);
+  }
+  drawCharts(labels, wr, ex);
+}
+
+function drawCharts(labels, wr, ex) {
+  if (wrChart) wrChart.destroy();
+  if (exChart) exChart.destroy();
+  const common = {
+    responsive: true,
+    plugins: { legend: { display: false } },
+    scales: { x: { ticks: { color: "#9aa3b5" } }, y: { ticks: { color: "#9aa3b5" } } },
+  };
+  wrChart = new Chart($("wr"), {
+    type: "bar",
+    data: { labels, datasets: [{ data: wr, backgroundColor: "#4f8ef7" }] },
+    options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Win rate (%)", color: "#e6e9f0" } } },
+  });
+  exChart = new Chart($("ex"), {
+    type: "bar",
+    data: { labels, datasets: [{ data: ex, backgroundColor: "#38c793" }] },
+    options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Expectancy per trade (%)", color: "#e6e9f0" } } },
+  });
+}
+
+function renderScan(data) {
+  $("scanResults").style.display = "block";
+  $("scanMeta").textContent = `(${data.tickers_used} tickers scanned)`;
+  const tbody = $("scanBody");
+  tbody.innerHTML = "";
+  if (!data.signals.length) {
+    tbody.innerHTML = `<tr><td colspan="5">No buy signals today.</td></tr>`;
+    return;
+  }
+  for (const s of data.signals) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td>${s.ticker}</td><td>${s.strategy}</td><td>${s.date}</td><td>${s.close.toFixed(2)}</td><td>${s.stop.toFixed(2)}</td>`;
+    tbody.appendChild(tr);
+  }
+}
+</script>
+</body>
+</html>

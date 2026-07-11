@@ -5,9 +5,14 @@ Execution model: a signal on day T's close opens a position at day T+1's open
 fill at their price; other exits fill at the close. Entries inside the
 earnings buffer window are skipped, and open positions are closed at the
 close of the bar before the window starts (reason: pre_earnings).
+
+Durations: history is always loaded with extra warmup days so the 200-day
+SMA is available, but trades are only opened inside the selected window.
+That makes short windows (1-2 months) work correctly.
 """
 
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import pandas as pd
@@ -15,6 +20,8 @@ import pandas as pd
 from .data import load_history
 from .earnings import earnings_dates, near_earnings
 from .strategies import Strategy
+
+WARMUP_DAYS = 400  # calendar days of extra history for indicator warmup
 
 
 @dataclass
@@ -88,6 +95,7 @@ def backtest_ticker(
     df: pd.DataFrame,
     edates: list,
     earnings_buffer: int = 3,
+    trade_start: pd.Timestamp | None = None,
 ) -> list[Trade]:
     trades: list[Trade] = []
     i = 0
@@ -98,6 +106,10 @@ def backtest_ticker(
             i += 1
             continue
         entry_idx = i + 1
+        # Only take trades inside the selected window (warmup bars excluded).
+        if trade_start is not None and df.index[entry_idx] < trade_start:
+            i += 1
+            continue
         # Earnings exclusion: never open a trade inside the buffer window.
         if near_earnings(df.index[i], edates, earnings_buffer) or near_earnings(
             df.index[entry_idx], edates, earnings_buffer
@@ -147,23 +159,31 @@ def backtest_ticker(
     return trades
 
 
+def _load(ticker: str, days: int):
+    df = load_history(ticker, days=days)
+    edates = earnings_dates(ticker) if not df.empty else []
+    return ticker, df, edates
+
+
 def run_all(
     tickers: list[str],
     strategies: list[Strategy],
-    years: int = 5,
+    duration_days: int = 365,
     earnings_buffer: int = 3,
+    max_workers: int = 8,
 ) -> dict[str, Results]:
-    """Backtest every strategy over every ticker; data fetched once per ticker."""
+    """Backtest every strategy over every ticker; data fetched in parallel."""
     results = {s.name: Results(strategy=s.label) for s in strategies}
-    for ticker in tickers:
-        df = load_history(ticker, years=years)
-        if df.empty:
-            continue
-        edates = earnings_dates(ticker)
-        counts = []
-        for s in strategies:
-            trades = backtest_ticker(s, ticker, df, edates, earnings_buffer)
-            results[s.name].trades.extend(trades)
-            counts.append(f"{s.name}={len(trades)}")
-        print(f"  {ticker}: {', '.join(counts)}")
+    trade_start = pd.Timestamp.today().normalize() - pd.Timedelta(days=duration_days)
+    total_days = duration_days + WARMUP_DAYS
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for ticker, df, edates in pool.map(lambda t: _load(t, total_days), tickers):
+            if df.empty:
+                continue
+            for s in strategies:
+                trades = backtest_ticker(
+                    s, ticker, df, edates, earnings_buffer, trade_start=trade_start
+                )
+                results[s.name].trades.extend(trades)
+            print(f"  {ticker}: done")
     return results

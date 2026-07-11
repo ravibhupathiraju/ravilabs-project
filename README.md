@@ -24,28 +24,28 @@ Every strategy shares:
 pip install -r requirements.txt
 ```
 
-## Usage
-
-Build the strategy comparison dashboard (backtests all six strategies and writes `dashboard.html`):
+## Web app (primary interface)
 
 ```bash
-python app.py dashboard --years 5
+python webapp.py
 ```
 
-Open `dashboard.html` in a browser to see trades, win rate, avg win/loss, expectancy, profit factor, avg hold, max drawdown, exit-reason breakdown, and comparison charts per strategy.
+Then open http://127.0.0.1:5000 in a browser. From the page you can:
 
-Scan the watchlist for buy signals today (all strategies, earnings-filtered):
+- **Pick a duration**: 1 month, 2 months, 3 months, 6 months, 1, 2, 3, or 5 years
+- **Pick a ticker universe**: My watchlist (20), Top 50 large caps (50), S&P 100 (~100), or a custom list you paste in; optionally cap the count with Max tickers
+- **Select strategies** and the earnings buffer
+- **Run backtest**: strategy-wise results table, win rate and expectancy charts, exit-reason breakdown
+- **Scan today**: current buy signals across the selected universe and strategies
+
+Short durations always work correctly: extra warmup history is loaded for the 200-day SMA, but trades are only opened inside the selected window. Note that larger universes take longer since price and earnings data is fetched per ticker (downloads run in parallel).
+
+## CLI (optional)
 
 ```bash
 python app.py scan
-python app.py scan --strategy rsi2 --tickers AAPL MSFT NVDA
-```
-
-Backtest in the terminal:
-
-```bash
-python app.py backtest --years 5
-python app.py backtest --strategy breakout20 --earnings-buffer 5
+python app.py backtest --duration 6m --strategy rsi2
+python app.py dashboard --duration 5y   # writes static dashboard.html
 ```
 
 ## Backtest methodology
