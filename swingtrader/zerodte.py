@@ -51,6 +51,7 @@ class DayTrade:
     exit_time: str
     exit_price: float
     pnl_pct: float
+    stop_price: float | None = None
 
 
 def _stats(trades: list[DayTrade]) -> dict:
@@ -159,6 +160,7 @@ def _orb15(bars: pd.DataFrame):
         "exit_time": bars.index[exit_i].strftime("%H:%M"),
         "exit_price": exit_price,
         "pnl_pct": direction * (exit_price - entry) / entry * 100.0,
+        "stop_price": stop,
     }
 
 

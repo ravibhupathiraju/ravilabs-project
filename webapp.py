@@ -9,7 +9,7 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import backtest, screener, zerodte
+from swingtrader import alerts, backtest, bear, screener, zerodte
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
@@ -19,11 +19,15 @@ app = Flask(__name__)
 
 def _tickers_from(payload: dict) -> list[str]:
     universe = payload.get("universe", "watchlist")
+    raw = payload.get("tickers", "")
+    custom = [t.upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
     if universe == "custom":
-        raw = payload.get("tickers", "")
-        tickers = [t.upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+        tickers = custom
     else:
         tickers = get_universe(universe)
+        if payload.get("include_custom"):  # extra tickers on top of a universe
+            seen = set(tickers)
+            tickers += [t for t in custom if t not in seen]
     limit = int(payload.get("limit") or 0)
     if limit > 0:
         tickers = tickers[:limit]
@@ -109,6 +113,88 @@ def api_zerodte():
             end=payload.get("end") or None,
         )
     except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(data)
+
+
+@app.post("/api/alerts/start")
+def api_alerts_start():
+    payload = request.get_json(force=True)
+    return jsonify(
+        alerts.MONITOR.start(
+            payload.get("symbols") or [],
+            payload.get("strategies") or [],
+            swing_universe=payload.get("swing_universe"),
+            swing_strategies=payload.get("swing_strategies") or [],
+            swing_tickers=payload.get("swing_tickers") or [],
+            earnings_buffer=int(payload.get("earnings_buffer", 3)),
+        )
+    )
+
+
+@app.post("/api/alerts/stop")
+def api_alerts_stop():
+    return jsonify(alerts.MONITOR.stop())
+
+
+@app.get("/api/alerts/status")
+def api_alerts_status():
+    return jsonify(alerts.MONITOR.status())
+
+
+@app.get("/api/alerts/history")
+def api_alerts_history():
+    symbols = [s for s in request.args.get("symbols", "").split(",") if s]
+    rows = alerts.history(
+        request.args.get("start") or None,
+        request.args.get("end") or None,
+        symbols or None,
+        kind=request.args.get("kind") or None,
+        strategy=request.args.get("strategy") or None,
+    )
+    return jsonify({"alerts": rows})
+
+
+@app.get("/api/alerts/performance")
+def api_alerts_performance():
+    return jsonify(
+        alerts.performance(
+            strategy=request.args.get("strategy") or None,
+            kind=request.args.get("kind") or None,
+        )
+    )
+
+
+@app.post("/api/bear/scan")
+def api_bear_scan():
+    payload = request.get_json(force=True)
+    tickers = _tickers_from(payload)
+    if not tickers:
+        return jsonify({"error": "no tickers selected"}), 400
+    return jsonify(
+        bear.scan_rank(
+            tickers,
+            top=int(payload.get("top", bear.TOP_N)),
+            min_score=int(payload.get("min_score") or 0),
+        )
+    )
+
+
+@app.post("/api/bear/research")
+def api_bear_research():
+    payload = request.get_json(force=True)
+    tickers = _tickers_from(payload)
+    if not tickers:
+        return jsonify({"error": "no tickers selected"}), 400
+    try:
+        data = bear.research(
+            tickers,
+            payload.get("start"),
+            payload.get("end"),
+            top=int(payload.get("top", bear.TOP_N)),
+            min_score=int(payload.get("min_score") or 0),
+        )
+    except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(data)
 

@@ -117,13 +117,8 @@ def backtest_ticker(
             i += 1
             continue
         entry_price = float(df.iloc[entry_idx]["Open"])
-        entry_atr = float(row["atr14"])
-        stop = entry_price - strategy.stop_atr_mult * entry_atr
-        target = (
-            entry_price + strategy.target_atr_mult * entry_atr
-            if strategy.target_atr_mult
-            else None
-        )
+        stop = strategy.initial_stop(row, entry_price)
+        target = strategy.initial_target(row, entry_price)
         exit_idx, reason, exit_price = None, None, None
         for j in range(entry_idx, n):
             bar = df.iloc[j]

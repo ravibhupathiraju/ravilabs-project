@@ -4,3 +4,4 @@ __pycache__/
 venv/
 *.csv
 .DS_Store
+alerts.db

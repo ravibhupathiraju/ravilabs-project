@@ -62,6 +62,30 @@ A second tab backtests five same-day (open and close the same session) strategie
 
 **Limitations to know:** free 5-minute data (yfinance) only covers ~60 days, so the three intraday strategies clip older date ranges (the UI warns when this happens). Gap Fade and the straddle proxy use daily bars and work for any range. The straddle sell is a volatility proxy in % of the underlying, not real option prices; true 0DTE options backtests require paid historical options data (for example CBOE DataShop).
 
+## Live alerts tab (0DTE + swing)
+
+A third tab turns both the five 0DTE strategies and the six swing strategies into a live alert system:
+
+- **Start monitor** launches a background poller (every 60s during 9:30–16:00 ET, Mon–Fri) that evaluates the selected strategies on today's data for the selected symbols
+- On an entry signal a **Windows desktop notification** fires with the entry time, entry price, stop price, and planned exit; a second notification fires when the trade exits (stop hit, condition met, or 16:00 close)
+- No one-alert-per-day limit: after an ORB stop-out or a VWAP-touch exit, the next signal the same session fires a fresh, numbered alert (Momentum-30, Gap Fade and the straddle have a single decision point per day by nature)
+- **Swing alerts** scan a chosen ticker universe (watchlist, top 50, S&P 100) every 15 minutes — plus once at monitor start, so an evening start still catches the day's close signals. Lifecycle mirrors the backtest: a **signal** alert on the setup (close, provisional stop, planned exit) → an **entry** alert when the position fills at the next session's open (exact ATR stop and target) → an **exit** alert on stop, profit target, signal exit, time stop, or pre-earnings close, with P/L. Tracking reconstructs correctly even if the app was off for a few days
+- Every alert is recorded to a local SQLite database (`alerts.db`) and shown in the **Alert history** table, filterable by date range, symbol, and type (0DTE/swing), with alert time, entry price, exit price, and P/L
+
+Keep `python webapp.py` running for alerts to fire (the browser tab may be closed). yfinance data lags real time by a minute or two — confirm prices on your own quotes before trading.
+
+## Bear strategy tab (TradeLab CRWV pullback score)
+
+A dedicated tab hosting a faithful port of the TradeLab "CRWV" swing model — a 0–100 scored pullback-in-uptrend system (validated to produce identical scores, levels and reasons on TradeLab's own research output):
+
+- **Trend (25)**: EMA5 > EMA21 > EMA50 (+10, counted twice as upstream), EMA21 rising over 10 bars (+5)
+- **Pullback (25)**: 10–30% below the 60-day high (+15); that high printed 5–25 bars ago (+10)
+- **Momentum (10)**: RSI(14) < 45 · **Volume (10)**: > 1.2× 20-day average volume
+- **Market regime (20)**: SPY > EMA200 (+10), SPY > EMA50 (+5), EMA50 > EMA200 (+5)
+- **Levels**: entry = scan close; stop = close − 1.5×ATR; target = close + 3×ATR; confidence ≥85 Very High / ≥70 High / ≥55 Medium
+
+The tab closes the full research loop: **Scan today** ranks the top 20 candidates with a market-regime banner; **Run research** replicates TradeLab's methodology (weekly scans → top 20 → 10-trading-day hold → per-date return / win% / target% / stop% and a summary average); **alerts** run the model live (per-ticker score ≥ 45 fires a signal → fill at next open → 1.5×ATR stop / 3×ATR target / 10-day time stop, with desktop notifications); and the **live performance panel** (win rate, expectancy, profit factor, cumulative P/L curve over logged alerts) shows what the model actually delivered vs. the research. The TradeLab 151-symbol universe ships as `tradable.txt` and is selectable everywhere; the strategy also appears in the regular swing backtest/scan/alerts as "Bear CRWV Pullback Score".
+
 ## Backtest methodology
 
 - Signals on day T's close are filled at day T+1's open (no look-ahead bias)

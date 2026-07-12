@@ -33,6 +33,7 @@ def scan(
                 continue
             for s in strategies:
                 if s.entry(row):
+                    trigger = s.exit_trigger(row)
                     signals.append(
                         {
                             "ticker": ticker,
@@ -40,6 +41,14 @@ def scan(
                             "date": str(date.date()),
                             "close": float(row["Close"]),
                             "stop": s.stop_price(row),
+                            "target": s.target_price(row),
+                            "atr": float(row["atr14"]),
+                            "stop_atr_mult": s.stop_atr_mult,
+                            "target_atr_mult": s.target_atr_mult,
+                            "exit_plan": s.planned_exit(),
+                            "description": s.description,
+                            "exit_trigger_label": trigger[0] if trigger else None,
+                            "exit_trigger_level": trigger[1] if trigger else None,
                         }
                     )
     signals.sort(key=lambda s: (s["strategy"], s["ticker"]))

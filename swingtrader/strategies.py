@@ -27,6 +27,9 @@ class Strategy:
     stop_atr_mult = 2.0
     target_atr_mult: float | None = None
     max_hold_days = 10
+    # True when stop/target are absolute chart levels fixed at signal time
+    # (e.g. a swing low / prior pivot high) rather than ATR offsets from entry.
+    absolute_levels = False
 
     def setup(self, row: pd.Series) -> bool:
         raise NotImplementedError
@@ -54,6 +57,36 @@ class Strategy:
     def stop_price(self, row: pd.Series) -> float:
         return float(row["Close"] - self.stop_atr_mult * row["atr14"])
 
+    def target_price(self, row: pd.Series) -> float | None:
+        if self.target_atr_mult is None:
+            return None
+        return float(row["Close"] + self.target_atr_mult * row["atr14"])
+
+    def planned_exit(self) -> str:
+        parts = [f"{self.stop_atr_mult}xATR stop"]
+        if self.target_atr_mult:
+            parts.append(f"{self.target_atr_mult}xATR target")
+        parts.append(f"signal exit, {self.max_hold_days}d time stop")
+        return ", ".join(parts)
+
+    def exit_trigger(self, row: pd.Series) -> tuple[str, float | None] | None:
+        """Today's level of the signal-exit condition, for display.
+
+        The level is recomputed daily, so it drifts while the trade is on;
+        it answers "roughly where would I take profit as of right now?"
+        """
+        return None
+
+    def initial_stop(self, sig_row: pd.Series, entry_price: float) -> float:
+        """Protective stop fixed at entry. Default: ATR offset from the fill."""
+        return entry_price - self.stop_atr_mult * float(sig_row["atr14"])
+
+    def initial_target(self, sig_row: pd.Series, entry_price: float) -> float | None:
+        """Profit target fixed at entry, or None for signal-exit strategies."""
+        if self.target_atr_mult is None:
+            return None
+        return entry_price + self.target_atr_mult * float(sig_row["atr14"])
+
 
 class RSI2MeanReversion(Strategy):
     name = "rsi2"
@@ -66,6 +99,9 @@ class RSI2MeanReversion(Strategy):
 
     def signal_exit(self, row):
         return row["Close"] > row["sma5"] or row["rsi2"] > 70
+
+    def exit_trigger(self, row):
+        return ("close above SMA5", float(row["sma5"]))
 
 
 class Double7s(Strategy):
@@ -81,6 +117,9 @@ class Double7s(Strategy):
     def signal_exit(self, row):
         return row["Close"] >= row["hi7"]
 
+    def exit_trigger(self, row):
+        return ("close at 7-day high", float(row["hi7"]))
+
 
 class BollingerSnapback(Strategy):
     name = "bollinger"
@@ -93,6 +132,9 @@ class BollingerSnapback(Strategy):
 
     def signal_exit(self, row):
         return row["Close"] > row["sma20"]
+
+    def exit_trigger(self, row):
+        return ("close above middle band (SMA20)", float(row["sma20"]))
 
 
 class TrendPullback(Strategy):
@@ -134,6 +176,9 @@ class DonchianBreakout(Strategy):
     def signal_exit(self, row):
         return row["Close"] < row["lo10_prior"]
 
+    def exit_trigger(self, row):
+        return ("close below 10-day low (trails up)", float(row["lo10_prior"]))
+
 
 class MACDTrend(Strategy):
     name = "macd"
@@ -149,6 +194,43 @@ class MACDTrend(Strategy):
     def signal_exit(self, row):
         return bool(row["macd_cross_down"])
 
+    def exit_trigger(self, row):
+        return ("MACD bearish cross (no price level)", None)
+
+
+class BearCRWV(Strategy):
+    """TradeLab "CRWV" scored pullback model, adapted to a binary signal so
+    it plugs into the screener, backtester and alert monitor.
+
+    The full model ranks tickers by a 0-100 score (see bear.py). For alerts
+    a threshold is needed: the per-ticker score (max 80, market regime
+    excluded) must reach BEAR_MIN_SCORE. 45 corresponds to a TradeLab
+    "Medium/High" pick on a bull-market day (45 + 20 regime = 65).
+
+    Levels match TradeLab: stop 1.5xATR, target 3xATR, 10-day hold.
+    """
+
+    BEAR_MIN_SCORE = 45
+
+    name = "bear"
+    label = "Bear CRWV Pullback Score"
+    description = (
+        "TradeLab CRWV model: uptrend (EMA5>EMA21>EMA50, EMA21 rising), healthy "
+        "10-30% pullback from the 60-day high, RSI(14)<45 and volume expansion, "
+        "scored 0-100; alert when the per-ticker score reaches 45. Stop 1.5xATR, "
+        "target 3xATR, 10-day hold."
+    )
+    required = ("bear_score", "pullback_pct", "bars_since_high", "rel_vol20", "rsi14")
+    stop_atr_mult = 1.5
+    target_atr_mult = 3.0
+    max_hold_days = 10
+
+    def setup(self, row):
+        return int(row["bear_score"]) >= self.BEAR_MIN_SCORE
+
+    def exit_trigger(self, row):
+        return ("3xATR target (fixed at entry)", None)
+
 
 ALL = [
     RSI2MeanReversion(),
@@ -157,5 +239,6 @@ ALL = [
     TrendPullback(),
     DonchianBreakout(),
     MACDTrend(),
+    BearCRWV(),
 ]
 STRATEGIES = {s.name: s for s in ALL}

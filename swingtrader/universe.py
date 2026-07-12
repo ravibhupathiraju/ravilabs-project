@@ -26,6 +26,8 @@ _LABELS = {
     "watchlist": "My watchlist",
     "top50": "Top 50 large caps",
     "sp100": "S&P 100 (approx.)",
+    "tradable": "TradeLab tradable",
+    "all": "All (watchlist + S&P 100 + tradable)",
 }
 
 
@@ -36,6 +38,12 @@ def get_universe(name: str) -> list[str]:
         return list(TOP50)
     if name == "sp100":
         return list(SP100)
+    if name == "tradable":  # the 151-symbol list from the TradeLab project
+        return read_watchlist("tradable.txt")
+    if name == "all":  # union of everything, deduped, original order kept
+        seen: set[str] = set()
+        combined = read_watchlist() + SP100 + read_watchlist("tradable.txt")
+        return [t for t in combined if not (t in seen or seen.add(t))]
     raise ValueError(f"unknown universe: {name!r}")
 
 

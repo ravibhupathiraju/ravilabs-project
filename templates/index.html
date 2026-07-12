@@ -42,6 +42,8 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 <div class="tabs">
   <button class="tab active" data-tab="swingTab">Swing strategies</button>
   <button class="tab" data-tab="zdteTab">0DTE intraday</button>
+  <button class="tab" data-tab="alertTab">0DTE alerts</button>
+  <button class="tab" data-tab="bearTab">Bear strategy</button>
 </div>
 
 <!-- ============ SWING TAB ============ -->
@@ -77,9 +79,9 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
     <label for="buffer">Earnings buffer (&plusmn; days)</label>
     <input type="number" id="buffer" value="3" min="0">
   </div>
-  <div class="field wide" id="customBox" style="display:none">
-    <label for="tickers">Custom tickers (comma or space separated)</label>
-    <textarea id="tickers" rows="2" placeholder="AAPL MSFT NVDA ..."></textarea>
+  <div class="field wide" id="customBox">
+    <label for="tickers">Custom tickers (comma or space separated) &mdash; added to scans and swing alerts; used alone when universe = Custom list</label>
+    <textarea id="tickers" rows="2" placeholder="PLTR SOFI ..."></textarea>
   </div>
   <div class="field wide">
     <label>Strategies</label>
@@ -94,7 +96,12 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   <div class="actions">
     <button class="run" id="runBtn">Run backtest</button>
     <button class="run secondary" id="scanBtn">Scan today</button>
+    <button class="run secondary" id="swAlertBtn">Start swing alerts</button>
+    <button class="run secondary" id="swStopBtn">Stop monitor</button>
     <span class="status" id="status"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" id="swStatusLine"></p>
   </div>
 </div>
 
@@ -117,11 +124,12 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 </div>
 
 <div id="scanResults" style="display:none">
-  <h3>Today's signals <span id="scanMeta" class="meta"></span></h3>
+  <h3>Today's buy signals <span id="scanMeta" class="meta"></span></h3>
   <table>
-    <thead><tr><th>Ticker</th><th>Strategy</th><th>Date</th><th>Close</th><th>Stop</th></tr></thead>
+    <thead><tr><th>Ticker</th><th>Strategy</th><th>Signal date</th><th>Action</th><th>Entry</th><th>Signal close</th><th>Stop &asymp;</th><th>Target / exit trigger &asymp;</th><th>Exit plan</th></tr></thead>
     <tbody id="scanBody"></tbody>
   </table>
+  <p class="note"><b>How to read this:</b> every row is a long (buy) setup that triggered on the signal date's close. The playbook, matching the backtest exactly: <b>buy at the next session's open</b>; place the protective stop at <i>your entry price &minus; the strategy's ATR multiple</i> (the Stop shown assumes entry &asymp; signal close, so recompute from your actual fill); if a Target is shown, take profit there (entry + target ATR multiple); otherwise exit when the strategy's exit signal fires or the time stop is reached &mdash; hover over the strategy name to see its rules. Tip: <b>Start swing alerts</b> automates all of this &mdash; it fills the entry at the open, fixes the exact stop/target, and notifies you on every exit. Educational use only; not financial advice.</p>
 </div>
 </div>
 
@@ -176,6 +184,183 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 </div>
 </div>
 
+<!-- ============ 0DTE ALERTS TAB ============ -->
+<div id="alertTab" style="display:none">
+<div class="card controls">
+  <div class="field wide">
+    <label>0DTE symbols to monitor</label>
+    <div class="checks">
+      <label class="check"><input type="checkbox" name="asym" value="SPY" checked> SPY</label>
+      <label class="check"><input type="checkbox" name="asym" value="SPX" checked> SPX</label>
+      <label class="check"><input type="checkbox" name="asym" value="QQQ" checked> QQQ</label>
+      <label class="check"><input type="checkbox" name="asym" value="IWM" checked> IWM</label>
+    </div>
+  </div>
+  <div class="field wide">
+    <label>0DTE strategies to monitor</label>
+    <div class="checks">
+      <label class="check"><input type="checkbox" name="astrat" value="orb15" checked> ORB 15-min Breakout</label>
+      <label class="check"><input type="checkbox" name="astrat" value="vwap" checked> VWAP Reversion</label>
+      <label class="check"><input type="checkbox" name="astrat" value="momentum30" checked> First 30-min Momentum</label>
+      <label class="check"><input type="checkbox" name="astrat" value="gapfade" checked> Gap Fade</label>
+      <label class="check"><input type="checkbox" name="astrat" value="straddle" checked> Expected-Move Straddle Sell</label>
+    </div>
+  </div>
+  <div class="field">
+    <label for="aUniverse">Swing ticker universe</label>
+    <select id="aUniverse">
+      {% for u in universes %}
+      <option value="{{ u.key }}">{{ u.label }} ({{ u.count }})</option>
+      {% endfor %}
+      <option value="none">Disable swing alerts</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="aBuffer">Earnings buffer (&plusmn; days)</label>
+    <input type="number" id="aBuffer" value="3" min="0">
+  </div>
+  <div class="field wide">
+    <label>Swing strategies to monitor</label>
+    <div class="checks">
+      {% for s in strategies %}
+      <label class="check" title="{{ s.description }}">
+        <input type="checkbox" name="aswing" value="{{ s.name }}" checked> {{ s.label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="actions">
+    <button class="run" id="aStartBtn">Start monitor</button>
+    <button class="run secondary" id="aStopBtn">Stop monitor</button>
+    <span class="status" id="aStatus"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" id="aStatusLine">Monitor not running.</p>
+    <p class="note"><b>0DTE:</b> while the market is open (9:30&ndash;16:00 ET, Mon&ndash;Fri) the monitor polls yfinance every 60 seconds, fires a Windows desktop notification when a strategy signals an entry (with entry time, price, stop, and planned exit), and another when the trade exits. <b>Swing:</b> the selected universe is scanned every 15 minutes (plus once when the monitor starts, so evening starts still catch the day's close signals). A signal alert fires on the setup; an entry alert fires when the position fills at the next session's open (with the exact stop and any target); an exit alert fires on stop, target, signal exit, time stop, or pre-earnings close &mdash; exactly the backtest's rules. Data lags real time by a minute or two &mdash; confirm prices on your own quotes before trading. Keep this app running for alerts to fire; the browser tab may be closed.</p>
+  </div>
+</div>
+
+<h3>Alert history</h3>
+<div class="card controls">
+  <div class="field">
+    <label for="ahStart">From date</label>
+    <input type="date" id="ahStart">
+  </div>
+  <div class="field">
+    <label for="ahEnd">To date</label>
+    <input type="date" id="ahEnd">
+  </div>
+  <div class="field">
+    <label for="ahKind">Type</label>
+    <select id="ahKind">
+      <option value="">All alerts</option>
+      <option value="0dte">0DTE only</option>
+      <option value="swing">Swing only</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="ahSyms">Symbols (blank = all)</label>
+    <input type="text" id="ahSyms" placeholder="e.g. SPY, AAPL, NVDA">
+  </div>
+  <div class="actions">
+    <button class="run" id="ahRefreshBtn">Refresh history</button>
+    <span class="status" id="ahStatus"></span>
+  </div>
+</div>
+
+<table>
+  <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Status</th></tr></thead>
+  <tbody id="ahBody"><tr><td colspan="14">No alerts recorded yet.</td></tr></tbody>
+</table>
+<p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Educational use only; not financial advice.</p>
+</div>
+
+<!-- ============ BEAR STRATEGY TAB ============ -->
+<div id="bearTab" style="display:none">
+<div class="card">
+  <h3 style="margin-top:0">Bear CRWV Pullback Score &mdash; ported from TradeLab</h3>
+  <p class="note">A 0&ndash;100 scored pullback-in-uptrend model, replicated exactly from the TradeLab codebase (validated: identical scores, levels and reasons on its research output):</p>
+  <p class="note">
+    <b>Trend (25)</b> &mdash; EMA5 &gt; EMA21 &gt; EMA50 (+10 twice, as upstream) and EMA21 rising over 10 bars (+5).&nbsp;
+    <b>Pullback (25)</b> &mdash; 10&ndash;30% below the 60-day high (+15), high printed 5&ndash;25 bars ago (+10).&nbsp;
+    <b>Momentum (10)</b> &mdash; RSI(14) &lt; 45.&nbsp;
+    <b>Volume (10)</b> &mdash; volume &gt; 1.2&times; its 20-day average.&nbsp;
+    <b>Market regime (20)</b> &mdash; SPY above EMA200 (+10), above EMA50 (+5), EMA50 &gt; EMA200 (+5).
+  </p>
+  <p class="note"><b>Levels</b>: entry at the scan close; stop = close &minus; 1.5&times;ATR; target = close + 3&times;ATR; 10-trading-day hold. Confidence: &ge;85 Very High, &ge;70 High, &ge;55 Medium. The research method scans weekly, takes the <b>top 20 by score</b>, and measures the next 10 days.</p>
+</div>
+
+<div class="card controls" style="margin-top:1rem">
+  <div class="field">
+    <label for="bUniverse">Universe</label>
+    <select id="bUniverse">
+      {% for u in universes %}
+      <option value="{{ u.key }}" {% if u.key == 'tradable' %}selected{% endif %}>{{ u.label }} ({{ u.count }})</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="field">
+    <label for="bStart">Research start</label>
+    <input type="date" id="bStart">
+  </div>
+  <div class="field">
+    <label for="bEnd">Research end</label>
+    <input type="date" id="bEnd">
+  </div>
+  <div class="field">
+    <label for="bMinScore">Min score (0 = off)</label>
+    <input type="number" id="bMinScore" value="0" min="0" max="100" step="5">
+  </div>
+  <div class="field">
+    <label for="bTopN">Top N picks (0 = all)</label>
+    <input type="number" id="bTopN" value="20" min="0">
+  </div>
+  <div class="actions">
+    <button class="run" id="bScanBtn">Scan today (top 20)</button>
+    <button class="run secondary" id="bResearchBtn">Run research (weekly)</button>
+    <button class="run secondary" id="bAlertBtn">Start bear alerts</button>
+    <button class="run secondary" id="bStopBtn">Stop monitor</button>
+    <span class="status" id="bStatus"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" id="bStatusLine"></p>
+  </div>
+</div>
+
+<div id="bRegime" style="display:none" class="card" ></div>
+
+<div id="bScanResults" style="display:none">
+  <h3>Today's ranked candidates <span id="bScanMeta" class="meta"></span></h3>
+  <table>
+    <thead><tr><th>#</th><th>Ticker</th><th>Score</th><th>Confidence</th><th>Entry</th><th>Stop</th><th>Target</th><th>Reasons</th></tr></thead>
+    <tbody id="bScanBody"></tbody>
+  </table>
+  <p class="note">Entry is the scan-day close (TradeLab convention). Live alerts fill at the next open instead and track the same 1.5&times;ATR stop / 3&times;ATR target.</p>
+</div>
+
+<div id="bResearchResults" style="display:none">
+  <h3>Research &mdash; weekly top-20, 10-day hold <span id="bResearchMeta" class="meta"></span></h3>
+  <table>
+    <thead><tr><th>Date</th><th>Picks</th><th>Return</th><th>Win %</th><th>Target %</th><th>Stop %</th><th>Regime</th></tr></thead>
+    <tbody id="bResearchBody"></tbody>
+  </table>
+  <p class="note" id="bResearchSummary"></p>
+</div>
+
+<h3>Live performance &mdash; how the alerts actually did <button class="run secondary" id="bPerfBtn" style="padding:4px 10px;font-size:0.8rem">Refresh</button></h3>
+<div class="card">
+  <p class="note" id="bPerfStats">No closed bear alerts yet &mdash; performance accrues as live alerts complete their trades.</p>
+  <div class="charts" style="margin:1rem 0 0"><div class="card"><canvas id="bCurve"></canvas></div><div></div></div>
+</div>
+
+<h3>Bear alert log</h3>
+<table>
+  <thead><tr><th>Date</th><th>Alert time</th><th>Symbol</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Target</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Status</th></tr></thead>
+  <tbody id="bHistBody"><tr><td colspan="11">No bear alerts recorded yet.</td></tr></tbody>
+</table>
+<p class="note">The full loop: the weekly research says what the edge <i>should</i> be; the scanner ranks today's candidates; alerts log every live signal (score &ge; 45 before the market bonus) with its fill, 1.5&times;ATR stop and 3&times;ATR target; and this log + the performance panel show what the strategy <i>actually</i> delivered &mdash; so live results can be compared against the research over time. Educational use only; not financial advice.</p>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let wrChart, exChart, zwrChart, zexChart;
@@ -185,8 +370,10 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
+    if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); }
+    if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
   })
 );
 
@@ -225,10 +412,6 @@ function barChart(canvas, labels, values, text, color) {
 }
 
 // ================= SWING TAB =================
-$("universe").addEventListener("change", () => {
-  $("customBox").style.display = $("universe").value === "custom" ? "flex" : "none";
-});
-
 function swingPayload() {
   return {
     duration: $("duration").value,
@@ -246,11 +429,14 @@ $("runBtn").addEventListener("click", async () => {
 });
 
 $("scanBtn").addEventListener("click", async () => {
-  const data = await callApi("/api/scan", swingPayload(), $("status"), [$("runBtn"), $("scanBtn")]);
+  // Scan today always covers everything: watchlist + S&P 100 + custom tickers.
+  const body = { ...swingPayload(), universe: "all", include_custom: true, limit: 0 };
+  const data = await callApi("/api/scan", body, $("status"), [$("runBtn"), $("scanBtn")]);
   if (data) renderScan(data);
 });
 
 function renderBacktest(data) {
+  $("scanResults").style.display = "none";
   $("results").style.display = "block";
   $("metaLine").textContent = `(${data.tickers_used} tickers, ${data.duration_days} days, earnings buffer \u00b1${data.earnings_buffer}d)`;
   const tbody = $("resultsBody");
@@ -287,17 +473,28 @@ function renderBacktest(data) {
 }
 
 function renderScan(data) {
+  $("results").style.display = "none";
   $("scanResults").style.display = "block";
   $("scanMeta").textContent = `(${data.tickers_used} tickers scanned)`;
   const tbody = $("scanBody");
   tbody.innerHTML = "";
   if (!data.signals.length) {
-    tbody.innerHTML = `<tr><td colspan="5">No buy signals today.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9">No buy signals today.</td></tr>`;
     return;
   }
   for (const s of data.signals) {
     const tr = document.createElement("tr");
-    tr.innerHTML = `<td>${s.ticker}</td><td>${s.strategy}</td><td>${s.date}</td><td>${s.close.toFixed(2)}</td><td>${s.stop.toFixed(2)}</td>`;
+    tr.innerHTML =
+      `<td>${s.ticker}</td><td title="${s.description || ""}">${s.strategy}</td><td>${s.date}</td>` +
+      `<td><span style="color:#38c793;font-weight:600">BUY</span></td>` +
+      `<td>next open</td><td>${s.close.toFixed(2)}</td>` +
+      `<td style="color:#e5534b">${s.stop.toFixed(2)}</td>` +
+      `<td style="color:#38c793">${
+        s.target ? s.target.toFixed(2)
+        : s.exit_trigger_level ? `${s.exit_trigger_level.toFixed(2)} <span class="note">(${s.exit_trigger_label}, moves daily)</span>`
+        : `<span class="note">${s.exit_trigger_label || "—"}</span>`
+      }</td>` +
+      `<td class="note">${s.exit_plan || ""}</td>`;
     tbody.appendChild(tr);
   }
 }
@@ -381,6 +578,315 @@ function renderZ(data) {
   if (zexChart) zexChart.destroy();
   zwrChart = barChart($("zwr"), labels, wr, "Win rate by strategy, all symbols (%)", "#4f8ef7");
   zexChart = barChart($("zex"), labels, ex, "Expectancy per trade, all symbols (%)", "#38c793");
+}
+
+// ================= 0DTE ALERTS TAB =================
+(function initAlertDates() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 14);
+  $("ahEnd").valueAsDate = end;
+  $("ahStart").valueAsDate = start;
+})();
+
+function renderAlertStatus(s) {
+  if (!s) return;
+  let html;
+  if (s.running) {
+    const zdte = s.symbols.length ? `0DTE: ${s.symbols.join(", ")}` : "0DTE alerts off";
+    const swing = s.swing_universe
+      ? `swing: ${s.swing_tickers} tickers, ${s.swing_strategies.length} strategies` +
+        (s.last_swing_poll ? ` (last scan ${s.last_swing_poll})` : "")
+      : "swing alerts off";
+    html =
+      `<span style="color:#38c793">&#9679; Monitor running</span> since ${s.started_at || "?"} ` +
+      `&mdash; ${zdte} &mdash; ${swing} &mdash; market ${s.market_open ? "OPEN" : "closed"} ` +
+      `(${s.now_et})${s.last_poll ? ` &mdash; last 0DTE poll ${s.last_poll}` : ""}`;
+  } else {
+    html = `<span style="color:#e5534b">&#9679; Monitor not running</span> (${s.now_et})`;
+  }
+  $("aStatusLine").innerHTML = html;
+  $("swStatusLine").innerHTML = html;
+  $("bStatusLine").innerHTML = html;
+}
+
+async function refreshAlertStatus() {
+  try {
+    const res = await fetch("/api/alerts/status");
+    renderAlertStatus(await res.json());
+  } catch (e) { /* server not reachable; leave last status */ }
+}
+setInterval(() => {
+  if ($("alertTab").style.display !== "none" || $("swingTab").style.display !== "none") refreshAlertStatus();
+}, 15000);
+refreshAlertStatus(); // initial load (swing tab is visible first)
+
+// Swing-tab alert controls: start a swing-only monitor over EVERY ticker
+// (watchlist + S&P 100 + any custom list), with this tab's strategies/buffer.
+$("swAlertBtn").addEventListener("click", async () => {
+  const body = {
+    symbols: [],            // 0DTE alerts stay off when starting from this tab
+    strategies: [],
+    swing_universe: "all",
+    swing_strategies: [...document.querySelectorAll("input[name=strategy]:checked")].map((c) => c.value),
+    swing_tickers: $("tickers").value.split(/[\s,]+/).filter(Boolean),
+    earnings_buffer: $("buffer").value,
+  };
+  if (!body.swing_strategies.length) { $("status").textContent = "Error: select at least one strategy"; return; }
+  const data = await callApi("/api/alerts/start", body, $("status"), [$("swAlertBtn"), $("swStopBtn")]);
+  renderAlertStatus(data);
+});
+
+$("swStopBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/alerts/stop", {}, $("status"), [$("swAlertBtn"), $("swStopBtn")]);
+  renderAlertStatus(data);
+});
+
+$("aStartBtn").addEventListener("click", async () => {
+  const body = {
+    symbols: [...document.querySelectorAll("input[name=asym]:checked")].map((c) => c.value),
+    strategies: [...document.querySelectorAll("input[name=astrat]:checked")].map((c) => c.value),
+    swing_universe: $("aUniverse").value,
+    swing_strategies: [...document.querySelectorAll("input[name=aswing]:checked")].map((c) => c.value),
+    earnings_buffer: $("aBuffer").value,
+  };
+  if (!body.symbols.length) { $("aStatus").textContent = "Error: select at least one symbol"; return; }
+  const data = await callApi("/api/alerts/start", body, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
+  renderAlertStatus(data);
+});
+
+$("aStopBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/alerts/stop", {}, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
+  renderAlertStatus(data);
+});
+
+async function loadAlertHistory() {
+  const syms = $("ahSyms").value.split(/[\s,]+/).filter(Boolean).map((s) => s.toUpperCase());
+  const params = new URLSearchParams({
+    start: $("ahStart").value, end: $("ahEnd").value,
+    symbols: syms.join(","), kind: $("ahKind").value,
+  });
+  $("ahStatus").textContent = "Loading...";
+  try {
+    const res = await fetch("/api/alerts/history?" + params);
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "request failed");
+    $("ahStatus").textContent = "";
+    const tbody = $("ahBody");
+    tbody.innerHTML = "";
+    if (!data.alerts.length) {
+      tbody.innerHTML = `<tr><td colspan="14">No alerts for the selected dates/symbols.</td></tr>`;
+      return;
+    }
+    const fmt = (v) => (v === null || v === undefined ? "&mdash;" : v.toFixed(2));
+    for (const a of data.alerts) {
+      const closed = a.status === "closed";
+      const pnl = a.pnl_pct === null ? "&mdash;" :
+        `<span style="color:${a.pnl_pct >= 0 ? "#38c793" : "#e5534b"}">${a.pnl_pct >= 0 ? "+" : ""}${a.pnl_pct.toFixed(2)}%</span>`;
+      const statusTxt = closed && a.exit_reason ? `closed (${a.exit_reason})` : a.status;
+      const tr = document.createElement("tr");
+      tr.innerHTML =
+        `<td>${a.date}</td><td>${a.alert_time}</td>` +
+        `<td>${a.kind === "swing" ? "Swing" : "0DTE"}</td><td>${a.symbol}</td>` +
+        `<td>${a.strategy_label}</td><td>${(a.seq || 0) + 1}</td><td>${a.direction}</td>` +
+        `<td>${a.entry_time || "&mdash;"}</td><td>${fmt(a.entry_price)}</td>` +
+        `<td>${fmt(a.stop_price)}</td>` +
+        `<td>${closed ? a.exit_time : (a.planned_exit || "&mdash;")}</td>` +
+        `<td>${fmt(a.exit_price)}</td>` +
+        `<td>${pnl}</td>` +
+        `<td style="color:${closed ? "#9aa3b5" : "#f0b429"}">${statusTxt}</td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (err) {
+    $("ahStatus").textContent = "Error: " + err.message;
+  }
+}
+$("ahRefreshBtn").addEventListener("click", loadAlertHistory);
+
+// ================= BEAR STRATEGY TAB =================
+let bCurveChart;
+
+(function initBearDates() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(start.getDate() - 60);
+  $("bEnd").valueAsDate = end;
+  $("bStart").valueAsDate = start;
+})();
+
+function renderRegime(m) {
+  if (!m) return;
+  const chip = (label, on) =>
+    `<span style="color:${on ? "#38c793" : "#e5534b"}">${on ? "&#10003;" : "&#10007;"} ${label}</span>`;
+  $("bRegime").style.display = "block";
+  $("bRegime").innerHTML =
+    `<b>Market regime (SPY ${m.close ? m.close.toFixed(2) : "?"})</b> &mdash; ` +
+    `${chip("Bull market (>EMA200)", m.bull_market)} &nbsp; ` +
+    `${chip("Above EMA50", m.above_ema50)} &nbsp; ` +
+    `${chip("EMA alignment", m.ema_alignment)} &nbsp; ` +
+    `<span class="note">regime score +${m.score}/20</span>`;
+}
+
+$("bScanBtn").addEventListener("click", async () => {
+  const body = {
+    universe: $("bUniverse").value, include_custom: true,
+    tickers: $("tickers").value, limit: 0,
+    min_score: $("bMinScore").value, top: $("bTopN").value,
+  };
+  const data = await callApi("/api/bear/scan", body, $("bStatus"), [$("bScanBtn"), $("bResearchBtn")]);
+  if (!data) return;
+  renderRegime(data.market);
+  $("bScanResults").style.display = "block";
+  $("bScanMeta").textContent = `(${data.tickers_used} tickers scanned)`;
+  $("bScanBody").innerHTML = data.results.length
+    ? data.results.map((s, i) =>
+        `<tr><td>${i + 1}</td><td>${s.ticker}</td><td><b>${s.score}</b></td><td>${s.confidence}</td>` +
+        `<td>${s.entry.toFixed(2)}</td><td style="color:#e5534b">${s.stop.toFixed(2)}</td>` +
+        `<td style="color:#38c793">${s.target.toFixed(2)}</td>` +
+        `<td class="note">${s.reasons.join("; ")}</td></tr>`).join("")
+    : `<tr><td colspan="8">No candidates scored.</td></tr>`;
+});
+
+function cohortCells(c) {
+  return `<td>${c.picks}</td>` +
+    `<td style="color:${c.avg_return >= 0 ? "#38c793" : "#e5534b"}">${c.avg_return.toFixed(2)}%</td>` +
+    `<td>${c.win_rate.toFixed(1)}%</td><td>${c.target_hit.toFixed(1)}%</td><td>${c.stop_hit.toFixed(1)}%</td>`;
+}
+
+$("bResearchBtn").addEventListener("click", async () => {
+  const body = {
+    universe: $("bUniverse").value, include_custom: true,
+    tickers: $("tickers").value, limit: 0,
+    start: $("bStart").value, end: $("bEnd").value,
+    min_score: $("bMinScore").value, top: $("bTopN").value,
+  };
+  const data = await callApi("/api/bear/research", body, $("bStatus"), [$("bScanBtn"), $("bResearchBtn")]);
+  if (!data) return;
+  $("bResearchResults").style.display = "block";
+  $("bResearchMeta").textContent = `(${data.tickers_used} tickers)`;
+  const tbody = $("bResearchBody");
+  tbody.innerHTML = "";
+  if (!data.dates.length) {
+    tbody.innerHTML = `<tr><td colspan="7">No dates matched (each pick needs 10 future sessions; try a lower min score).</td></tr>`;
+    $("bResearchSummary").innerHTML = "";
+    return;
+  }
+  for (const d of data.dates) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td style="cursor:pointer" title="Click to expand the score-level breakdown">➕ ${d.date}</td>` +
+      cohortCells(d) + `<td class="note">${d.market.bull_market ? "bull" : "bear"}</td>`;
+    tbody.appendChild(tr);
+
+    const detail = document.createElement("tr");
+    detail.style.display = "none";
+    const tierRows = d.by_score.map((t) =>
+      `<tr><td>${t.tier}</td>${cohortCells(t)}</tr>`).join("");
+    const pickRows = d.detail.map((p) =>
+      `<tr><td>${p.ticker}</td><td>${p.score}</td><td>${p.confidence}</td>` +
+      `<td>${p.entry.toFixed(2)}</td>` +
+      `<td style="color:${p.return_pct >= 0 ? "#38c793" : "#e5534b"}">${p.return_pct.toFixed(2)}%</td>` +
+      `<td>${p.max_gain_pct.toFixed(1)}%</td><td>${p.max_loss_pct.toFixed(1)}%</td>` +
+      `<td>${p.target_hit ? "✓" : ""}</td><td>${p.stop_hit ? "✓" : ""}</td></tr>`).join("");
+    detail.innerHTML =
+      `<td colspan="7">` +
+      `<h4 style="margin:0.5rem 0 0.25rem;color:#9aa3b5">By score level</h4>` +
+      `<table style="margin:0"><thead><tr><th>Score tier</th><th>Picks</th><th>Return</th><th>Win %</th><th>Target %</th><th>Stop %</th></tr></thead>` +
+      `<tbody>${tierRows}</tbody></table>` +
+      `<h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Individual picks</h4>` +
+      `<table style="margin:0 0 0.75rem"><thead><tr><th>Ticker</th><th>Score</th><th>Confidence</th><th>Entry</th><th>Return</th><th>Max gain</th><th>Max loss</th><th>Target hit</th><th>Stop hit</th></tr></thead>` +
+      `<tbody>${pickRows}</tbody></table></td>`;
+    tbody.appendChild(detail);
+    tr.cells[0].addEventListener("click", () => {
+      const open = detail.style.display !== "none";
+      detail.style.display = open ? "none" : "table-row";
+      tr.cells[0].innerHTML = (open ? "➕ " : "➖ ") + d.date;
+    });
+  }
+  let summaryHtml = data.summary
+    ? `<b>Average return: ${data.summary.avg_return.toFixed(2)}%</b> per weekly cohort &mdash; ` +
+      `average win rate ${data.summary.avg_win_rate.toFixed(1)}%. Return = close after 10 sessions vs the scan close, ` +
+      `per TradeLab's research engine (target/stop hit rates are informational, not exits).`
+    : "";
+  if (data.summary && data.summary.by_score) {
+    summaryHtml += `<br><b>All dates combined, by score level:</b> ` + data.summary.by_score.map((t) =>
+      `${t.tier}: ${t.picks} picks, ${t.avg_return >= 0 ? "+" : ""}${t.avg_return.toFixed(2)}% avg, ${t.win_rate.toFixed(0)}% win`).join(" &nbsp;|&nbsp; ");
+  }
+  $("bResearchSummary").innerHTML = summaryHtml;
+});
+
+$("bAlertBtn").addEventListener("click", async () => {
+  const body = {
+    symbols: [], strategies: [],
+    swing_universe: $("bUniverse").value,
+    swing_strategies: ["bear"],
+    swing_tickers: $("tickers").value.split(/[\s,]+/).filter(Boolean),
+    earnings_buffer: 3,
+  };
+  const data = await callApi("/api/alerts/start", body, $("bStatus"), [$("bAlertBtn"), $("bStopBtn")]);
+  renderAlertStatus(data);
+});
+$("bStopBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/alerts/stop", {}, $("bStatus"), [$("bAlertBtn"), $("bStopBtn")]);
+  renderAlertStatus(data);
+});
+
+async function loadBearPerformance() {
+  try {
+    const res = await fetch("/api/alerts/performance?strategy=bear");
+    const p = await res.json();
+    if (!p.closed) {
+      $("bPerfStats").innerHTML =
+        `No closed bear alerts yet (${p.signals} signal${p.signals === 1 ? "" : "s"} pending, ` +
+        `${p.open} open) &mdash; performance accrues as live alerts complete their trades.`;
+      if (bCurveChart) { bCurveChart.destroy(); bCurveChart = null; }
+      return;
+    }
+    const pf = p.profit_factor === null ? "∞" : p.profit_factor.toFixed(2);
+    const reasons = Object.entries(p.exit_reasons).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${v}`).join(", ");
+    $("bPerfStats").innerHTML =
+      `<b>${p.closed} closed</b> (${p.open} open, ${p.signals} pending) since ${p.first_alert} &mdash; ` +
+      `win rate <b>${p.win_rate.toFixed(1)}%</b>, expectancy <b>${p.expectancy.toFixed(2)}%</b>/trade, ` +
+      `avg win ${p.avg_win.toFixed(2)}% / avg loss ${p.avg_loss.toFixed(2)}%, profit factor <b>${pf}</b>, ` +
+      `total <b style="color:${p.total_pnl >= 0 ? "#38c793" : "#e5534b"}">${p.total_pnl >= 0 ? "+" : ""}${p.total_pnl}%</b> ` +
+      `&mdash; exits: ${reasons}`;
+    if (bCurveChart) bCurveChart.destroy();
+    bCurveChart = new Chart($("bCurve"), {
+      type: "line",
+      data: {
+        labels: p.curve.map((c) => c.date),
+        datasets: [{ data: p.curve.map((c) => c.cum_pnl), borderColor: "#38c793", backgroundColor: "rgba(56,199,147,0.15)", fill: true, tension: 0.2 }],
+      },
+      options: {
+        plugins: { legend: { display: false }, title: { display: true, text: "Cumulative live P/L (% points)", color: "#e6e9f0" } },
+        scales: { x: { ticks: { color: "#9aa3b5" } }, y: { ticks: { color: "#9aa3b5" } } },
+      },
+    });
+  } catch (e) { /* server unreachable */ }
+}
+$("bPerfBtn").addEventListener("click", loadBearPerformance);
+
+async function loadBearHistory() {
+  try {
+    const res = await fetch("/api/alerts/history?strategy=bear");
+    const data = await res.json();
+    const tbody = $("bHistBody");
+    if (!data.alerts.length) {
+      tbody.innerHTML = `<tr><td colspan="11">No bear alerts recorded yet.</td></tr>`;
+      return;
+    }
+    const fmt = (v) => (v === null || v === undefined ? "&mdash;" : v.toFixed(2));
+    tbody.innerHTML = data.alerts.map((a) => {
+      const closed = a.status === "closed";
+      const pnl = a.pnl_pct === null ? "&mdash;" :
+        `<span style="color:${a.pnl_pct >= 0 ? "#38c793" : "#e5534b"}">${a.pnl_pct >= 0 ? "+" : ""}${a.pnl_pct.toFixed(2)}%</span>`;
+      return `<tr><td>${a.date}</td><td>${a.alert_time}</td><td>${a.symbol}</td>` +
+        `<td>${a.entry_time || "&mdash;"}</td><td>${fmt(a.entry_price)}</td>` +
+        `<td>${fmt(a.stop_price)}</td><td>${fmt(a.target_price)}</td>` +
+        `<td>${closed ? a.exit_time : "&mdash;"}</td><td>${fmt(a.exit_price)}</td><td>${pnl}</td>` +
+        `<td style="color:${closed ? "#9aa3b5" : "#f0b429"}">${closed && a.exit_reason ? `closed (${a.exit_reason})` : a.status}</td></tr>`;
+    }).join("");
+  } catch (e) { /* server unreachable */ }
 }
 </script>
 </body>

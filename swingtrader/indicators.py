@@ -74,4 +74,58 @@ def enrich(df: pd.DataFrame) -> pd.DataFrame:
     out["lo10_prior"] = out["Low"].rolling(10, min_periods=10).min().shift(1)
     out["lo7"] = close.rolling(7, min_periods=7).min()
     out["hi7"] = close.rolling(7, min_periods=7).max()
+
+    _bear_columns(out)
     return out
+
+
+# --- Bear (TradeLab CRWV) score columns -----------------------------------
+# Faithful port of the TradeLab CRWV swing strategy: a 0-100 scored
+# pullback-in-uptrend model. The per-ticker part (max 80 points) is computed
+# here as columns; the SPY market-regime part (max 20 points) is added at
+# scan time in bear.py since it is the same for every ticker on a given day.
+#
+# Component points (TradeLab crwv_strategy.py):
+#   +10 TREND_UP        EMA5 > EMA21 > EMA50
+#   +10 EMA_ALIGNMENT   same condition (scored twice upstream; kept faithful)
+#   +5  EMA21 rising    EMA21 today > EMA21 ten bars ago
+#   +15 healthy pullback  10% <= pullback from 60-day high <= 30%
+#   +10 bars since high   5 <= bars since that 60-day high <= 25
+#   +10 RSI(14) < 45
+#   +10 relative volume > 1.20x the 20-day average
+
+BEAR_SCORE_MAX = 80  # per-ticker points (market regime adds up to 20)
+
+
+def _bear_columns(out: pd.DataFrame) -> None:
+    close = out["Close"]
+    out["ema5"] = close.ewm(span=5, adjust=False).mean()
+    out["ema21"] = close.ewm(span=21, adjust=False).mean()
+    out["ema50"] = close.ewm(span=50, adjust=False).mean()
+    out["rel_vol20"] = out["Volume"] / out["avg_vol20"]
+
+    # Pullback from the 60-day high, and how many bars ago that high printed.
+    hi60 = out["High"].rolling(60, min_periods=60).max()
+    out["pullback_pct"] = (hi60 - close) / hi60 * 100.0
+    high = out["High"].to_numpy(dtype=float)
+    n = len(out)
+    bars_since = np.full(n, np.nan)
+    for t in range(59, n):
+        window = high[t - 59 : t + 1]
+        if not np.isnan(window).any():
+            bars_since[t] = 59 - int(window.argmax())
+    out["bars_since_high"] = bars_since
+
+    trend_up = (out["ema5"] > out["ema21"]) & (out["ema21"] > out["ema50"])
+    out["trend_up"] = trend_up
+    out["ema21_rising"] = out["ema21"] > out["ema21"].shift(10)
+
+    out["bear_score"] = (
+        10 * trend_up.astype(int)
+        + 10 * trend_up.astype(int)  # EMA_ALIGNMENT duplicates TREND_UP upstream
+        + 5 * out["ema21_rising"].astype(int)
+        + 15 * out["pullback_pct"].between(10, 30).astype(int)
+        + 10 * out["bars_since_high"].between(5, 25).astype(int)
+        + 10 * (out["rsi14"] < 45).astype(int)
+        + 10 * (out["rel_vol20"] > 1.20).astype(int)
+    )
