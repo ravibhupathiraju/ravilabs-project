@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Swing Strategy Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem; background: #0f1420; color: #e6e9f0; }
+h1 { margin-bottom: 0.2rem; }
+.meta { color: #9aa3b5; margin-top: 0; }
+table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #263042; }
+th:first-child, td:first-child { text-align: left; }
+td:first-child { font-weight: 600; }
+th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 2rem 0; }
+.card { background: #171f30; border-radius: 10px; padding: 1rem; }
+.note { color: #9aa3b5; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Swing Strategy Dashboard</h1>
+<p class="meta">20 tickers | 1 years | earnings buffer +/-3 days &middot; generated 2026-07-11 20:13 UTC</p>
+<table>
+<thead><tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th><th>Expectancy</th><th>Profit factor</th><th>Avg hold</th><th>Max DD</th></tr></thead>
+<tbody>
+<tr><td>SMA20 Trend Pullback</td><td>14</td><td>50.0%</td><td>+6.78%</td><td>-3.05%</td><td>+1.87%</td><td>2.22</td><td>6.0d</td><td>13.0%</td></tr>
+<tr><td>Double 7s</td><td>39</td><td>71.8%</td><td>+3.84%</td><td>-4.26%</td><td>+1.56%</td><td>2.30</td><td>5.3d</td><td>16.1%</td></tr>
+<tr><td>RSI(2) Mean Reversion</td><td>28</td><td>71.4%</td><td>+2.73%</td><td>-2.68%</td><td>+1.18%</td><td>2.55</td><td>2.3d</td><td>13.3%</td></tr>
+<tr><td>20-Day Breakout</td><td>9</td><td>33.3%</td><td>+9.08%</td><td>-4.13%</td><td>+0.27%</td><td>1.10</td><td>13.1d</td><td>11.3%</td></tr>
+<tr><td>Bollinger Snapback</td><td>10</td><td>50.0%</td><td>+3.20%</td><td>-3.86%</td><td>-0.33%</td><td>0.83</td><td>7.8d</td><td>12.0%</td></tr>
+<tr><td>MACD Trend Cross</td><td>29</td><td>31.0%</td><td>+4.93%</td><td>-2.94%</td><td>-0.50%</td><td>0.75</td><td>6.6d</td><td>26.0%</td></tr>
+</tbody>
+</table>
+<div class="charts">
+<div class="card"><canvas id="wr"></canvas></div>
+<div class="card"><canvas id="ex"></canvas></div>
+</div>
+<h3>Exit reason breakdown</h3>
+<table><thead><tr><th>Strategy</th><th>Exit reasons</th></tr></thead><tbody>
+<tr><td>SMA20 Trend Pullback</td><td>profit_target: 5, stop: 4, signal: 3, end_of_data: 1, time_stop: 1</td></tr>
+<tr><td>Double 7s</td><td>signal: 30, stop: 9</td></tr>
+<tr><td>RSI(2) Mean Reversion</td><td>signal: 25, stop: 3</td></tr>
+<tr><td>20-Day Breakout</td><td>time_stop: 4, stop: 3, signal: 1, end_of_data: 1</td></tr>
+<tr><td>Bollinger Snapback</td><td>time_stop: 5, signal: 3, stop: 2</td></tr>
+<tr><td>MACD Trend Cross</td><td>signal: 18, end_of_data: 9, stop: 2</td></tr>
+</tbody></table>
+<p class="note">Entries are skipped and open positions closed within the earnings buffer window. Sorted by expectancy. Educational use only; not financial advice.</p>
+<script>
+const labels = ["SMA20 Trend Pullback", "Double 7s", "RSI(2) Mean Reversion", "20-Day Breakout", "Bollinger Snapback", "MACD Trend Cross"];
+const common = { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: "#9aa3b5" } }, y: { ticks: { color: "#9aa3b5" } } } };
+new Chart(document.getElementById("wr"), { type: "bar", data: { labels, datasets: [{ data: [50.0, 71.8, 71.4, 33.3, 50.0, 31.0], backgroundColor: "#4f8ef7" }] }, options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Win rate (%)", color: "#e6e9f0" } } } });
+new Chart(document.getElementById("ex"), { type: "bar", data: { labels, datasets: [{ data: [1.87, 1.56, 1.18, 0.27, -0.33, -0.5], backgroundColor: "#38c793" }] }, options: { ...common, plugins: { ...common.plugins, title: { display: true, text: "Expectancy per trade (%)", color: "#e6e9f0" } } } });
+</script>
+</body>
+</html>
