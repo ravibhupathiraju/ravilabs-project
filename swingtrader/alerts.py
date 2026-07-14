@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
-from . import screener, zerodte
+from . import broker, screener, zerodte
 from .data import load_history
 from .earnings import earnings_dates, near_earnings
 from .strategies import STRATEGIES as SWING_STRATEGIES
@@ -74,6 +74,7 @@ _COLUMNS = [
     "kind", "alert_time", "date", "symbol", "strategy", "seq", "direction",
     "entry_time", "entry_price", "stop_price", "target_price", "atr_entry",
     "planned_exit", "exit_time", "exit_price", "pnl_pct", "exit_reason", "status",
+    "broker_order_id",
 ]
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS alerts (
@@ -96,6 +97,7 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS alerts (
     pnl_pct REAL,
     exit_reason TEXT,              -- swing: stop/profit_target/signal/time_stop/pre_earnings
     status TEXT NOT NULL DEFAULT 'open',  -- swing: signal -> open -> closed
+    broker_order_id TEXT,          -- Alpaca paper order id when mirrored to the broker
     UNIQUE(date, symbol, strategy, seq)
 )"""
 
@@ -235,15 +237,15 @@ def _load_today(yf_sym: str) -> pd.DataFrame:
     return df.dropna(subset=["Close"])
 
 
-def _prev_close_and_sigma(yf_sym: str) -> tuple[float | None, float | None]:
-    df = zerodte.load_daily(
-        yf_sym, pd.Timestamp.today().normalize() - pd.Timedelta(days=45),
-        pd.Timestamp.today().normalize(),
-    )
+def _prev_close_and_sigma(
+    yf_sym: str, as_of: str | None = None
+) -> tuple[float | None, float | None]:
+    ref = pd.Timestamp(as_of).normalize() if as_of else pd.Timestamp.today().normalize()
+    df = zerodte.load_daily(yf_sym, ref - pd.Timedelta(days=45), ref)
     if df.empty or len(df) < 2:
         return None, None
-    # exclude today's partial row if present
-    hist = df[df.index < pd.Timestamp.today().normalize()]
+    # exclude the session's own (possibly partial) row
+    hist = df[df.index < ref]
     if hist.empty:
         return None, None
     prev_close = float(hist["Close"].iloc[-1])
@@ -374,13 +376,14 @@ def _eval_intraday(name: str, bars: pd.DataFrame, session_over: bool) -> list[di
     return [res]
 
 
-def _eval_daily(name: str, bars: pd.DataFrame, yf_sym: str, session_over: bool) -> dict | None:
-    """Gap fade / straddle sell evaluated live from today's first bar."""
+def _eval_daily(name: str, bars: pd.DataFrame, yf_sym: str, session_over: bool,
+                as_of: str | None = None) -> dict | None:
+    """Gap fade / straddle sell evaluated live from the session's first bar."""
     if bars.empty:
         return None
     o = float(bars["Open"].iloc[0])
     last = float(bars["Close"].iloc[-1])
-    prev_close, sigma = _prev_close_and_sigma(yf_sym)
+    prev_close, sigma = _prev_close_and_sigma(yf_sym, as_of=as_of)
     entry_time = bars.index[0].strftime("%H:%M")
     last_t = bars.index[-1].strftime("%H:%M")
     if name == "gapfade":
@@ -418,9 +421,120 @@ def _eval_daily(name: str, bars: pd.DataFrame, yf_sym: str, session_over: bool) 
 
 
 # --------------------------------------------------------------------------
+# Reconciliation: close 0DTE rows orphaned in 'open' state
+# --------------------------------------------------------------------------
+
+def _direction_mult(direction: str) -> int:
+    return -1 if direction in ("short", "short_vol") else 1
+
+
+def _load_session(yf_sym: str, date: str) -> pd.DataFrame:
+    """5-minute bars for one session (empty beyond yfinance's ~60-day window)."""
+    try:
+        df = yf.Ticker(yf_sym).history(
+            start=date,
+            end=str((pd.Timestamp(date) + pd.Timedelta(days=1)).date()),
+            interval="5m",
+            auto_adjust=True,
+        )
+    except Exception as exc:
+        print(f"[alert] session fetch failed for {yf_sym} {date}: {exc}")
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = _flatten(df)
+    if getattr(df.index, "tz", None) is not None:
+        df.index = df.index.tz_convert("America/New_York").tz_localize(None)
+    return df.dropna(subset=["Close"])
+
+
+def _fallback_close(row: dict, yf_sym: str, date: str, bars: pd.DataFrame) -> dict | None:
+    """Close a stale row at the session close when an exact replay isn't possible."""
+    if not bars.empty:
+        last = float(bars["Close"].iloc[-1])
+    else:
+        day = zerodte.load_daily(yf_sym, pd.Timestamp(date), pd.Timestamp(date))
+        day = day[day.index == pd.Timestamp(date)]
+        if day.empty:
+            return None
+        last = float(day["Close"].iloc[-1])
+    entry = row["entry_price"]
+    if entry is None:
+        return None
+    if row["strategy"] == "straddle":
+        _, sigma = _prev_close_and_sigma(yf_sym, as_of=date)
+        if sigma is None:
+            return None
+        pnl = float((STRADDLE_PREMIUM_MULT * sigma - abs(last / entry - 1.0)) * 100.0)
+    else:
+        pnl = _direction_mult(row["direction"]) * (last - entry) / entry * 100.0
+    return {"exit_time": "16:00", "exit_price": last, "pnl_pct": pnl}
+
+
+def close_stale_0dte(now: datetime) -> int:
+    """Close 0DTE rows left 'open' after their session ended.
+
+    Exits are normally written by the poll loop during the 16:00-16:10 grace
+    window. If the monitor was stopped at the close, started late, or the
+    machine slept, rows stay 'open' forever. This replays each stale session
+    with the same evaluators and records the missed exits (prints instead of
+    toasts -- these are old news). Returns the number of rows closed.
+    """
+    today = now.strftime("%Y-%m-%d")
+    q = "SELECT * FROM alerts WHERE kind='0dte' AND status='open' AND date < ?"
+    params = [today]
+    if now.strftime("%H:%M") >= "16:10":  # today's session is over too
+        q = q.replace("date < ?", "(date < ? OR date = ?)")
+        params.append(today)
+    with _db() as con:
+        rows = [dict(r) for r in con.execute(q, params)]
+    if not rows:
+        return 0
+    closed = 0
+    by_session: dict[tuple[str, str], list[dict]] = {}
+    for r in rows:
+        by_session.setdefault((r["date"], r["symbol"]), []).append(r)
+    for (date, sym), srows in by_session.items():
+        yf_sym = SYMBOLS.get(sym)
+        if yf_sym is None:
+            continue
+        bars = _load_session(yf_sym, date)
+        for row in srows:
+            res = None
+            name = row["strategy"]
+            if not bars.empty:
+                if name in INTRADAY:
+                    trades = _eval_intraday(name, bars, session_over=True)
+                    if row["seq"] < len(trades):
+                        res = trades[row["seq"]]
+                else:
+                    res = _eval_daily(name, bars, yf_sym, True, as_of=date)
+            if res is None:
+                res = _fallback_close(row, yf_sym, date, bars)
+            if res is None:
+                continue  # no data at all; try again next reconcile
+            with _db() as con:
+                con.execute(
+                    """UPDATE alerts SET exit_time=?, exit_price=?, pnl_pct=?,
+                        exit_reason='reconciled', status='closed' WHERE id=?""",
+                    (res["exit_time"], res["exit_price"], res["pnl_pct"], row["id"]),
+                )
+            closed += 1
+            print(
+                f"[alert] reconciled {sym} {name} #{row['seq']} {date}: "
+                f"exit {res['exit_time']} @ {res['exit_price']:.2f} ({res['pnl_pct']:+.2f}%)"
+            )
+    return closed
+
+
+# --------------------------------------------------------------------------
 # Swing alerts: signal on the close -> fill at next open -> daily exit checks
 # (mirrors the backtest execution model in backtest.py)
 # --------------------------------------------------------------------------
+
+def _market_hours(now: datetime) -> bool:
+    return now.weekday() < 5 and "09:30" <= now.strftime("%H:%M") <= "16:00"
+
 
 def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
     """Insert a new swing buy-signal alert; toast only when it is new."""
@@ -436,12 +550,42 @@ def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
                 sig["stop"], sig.get("target"), atr, _swing_planned_exit(strat),
             ),
         )
-        if cur.rowcount:
-            tgt = f" | Target ≈ {sig['target']:.2f}" if sig.get("target") else ""
+        is_new = bool(cur.rowcount)
+        row = con.execute(
+            """SELECT id, status, broker_order_id FROM alerts WHERE kind='swing'
+                AND date=? AND symbol=? AND strategy=? AND seq=0""",
+            (sig["date"], sig["ticker"], key),
+        ).fetchone()
+    if is_new:
+        tgt = f" | Target ≈ {sig['target']:.2f}" if sig.get("target") else ""
+        _toast(
+            f"SWING SIGNAL: {sig['ticker']} — {strat.label}",
+            f"Close {sig['close']:.2f} on {sig['date']} | Buy at next open"
+            f" | Stop ≈ {sig['stop']:.2f}{tgt} | Exit: {_swing_planned_exit(strat)}",
+        )
+    # Paper order — only on a COMPLETED daily bar (market closed). Signals
+    # seen intraday are provisional (partial bar) and a market order would
+    # also fill immediately instead of at the next open; the monitor rescans
+    # after the close and mirrors the signals that survived. GTC market
+    # orders submitted after hours queue and fill at the next open.
+    if (
+        row is not None
+        and row["status"] == "signal"
+        and not row["broker_order_id"]
+        and not _market_hours(now)
+    ):
+        order_id = broker.buy_bracket(
+            sig["ticker"], sig["close"], sig["stop"], sig.get("target")
+        )
+        if order_id:
+            with _db() as con:
+                con.execute(
+                    "UPDATE alerts SET broker_order_id=? WHERE id=?",
+                    (order_id, row["id"]),
+                )
             _toast(
-                f"SWING SIGNAL: {sig['ticker']} — {strat.label}",
-                f"Close {sig['close']:.2f} on {sig['date']} | Buy at next open"
-                f" | Stop ≈ {sig['stop']:.2f}{tgt} | Exit: {_swing_planned_exit(strat)}",
+                f"PAPER ORDER: {sig['ticker']} — {strat.label}",
+                f"Bracket buy submitted to Alpaca paper (fills at next open)",
             )
 
 
@@ -538,6 +682,11 @@ def _track_swing_positions(earnings_buffer: int, now: datetime) -> None:
                     f" (entered {row['entry_time']} @ {row['entry_price']:.2f})"
                     f" — {strat.label}",
                 )
+                # Flatten the mirrored paper position. Safe for stop/target
+                # exits too: the bracket leg usually filled broker-side
+                # already, in which case this is a quiet no-op.
+                if row.get("broker_order_id"):
+                    broker.close(ticker)
                 break
 
 
@@ -558,6 +707,8 @@ class AlertMonitor:
         self.last_poll: str | None = None
         self.last_swing_poll: str | None = None
         self._last_swing_ts: float | None = None
+        self._last_eod_date: str | None = None
+        self._reconciled_key: str | None = None
         self.started_at: str | None = None
 
     # -- public API --------------------------------------------------------
@@ -595,6 +746,12 @@ class AlertMonitor:
             ]
         self.earnings_buffer = int(earnings_buffer)
         self._last_swing_ts = None
+        # A start after 16:15 makes the immediate first tick the EOD scan.
+        now = datetime.now(NY)
+        self._last_eod_date = (
+            now.strftime("%Y-%m-%d") if now.strftime("%H:%M") >= "16:15" else None
+        )
+        self._reconciled_key = None
         self._stop.clear()
         self.started_at = datetime.now(NY).isoformat(timespec="seconds")
         self._thread = threading.Thread(target=self._loop, daemon=True)
@@ -640,6 +797,16 @@ class AlertMonitor:
     def _loop(self) -> None:
         while not self._stop.is_set():
             now = datetime.now(NY)
+            # Close orphaned 0DTE rows: once on start (catches sessions the
+            # monitor missed entirely) and once after each 16:10 cutoff (in
+            # case the close-window polls failed). No-op when nothing is stale.
+            key = now.strftime("%Y-%m-%d") if now.strftime("%H:%M") >= "16:10" else "startup"
+            if self._reconciled_key != key:
+                try:
+                    close_stale_0dte(now)
+                except Exception as exc:
+                    print(f"[alert] reconcile error: {exc}")
+                self._reconciled_key = key
             if self.symbols and self._market_open(now):
                 try:
                     self._poll(now)
@@ -660,6 +827,21 @@ class AlertMonitor:
                 except Exception as exc:
                     print(f"[alert] swing tick error: {exc}")
                 self._last_swing_ts = time.time()
+                self.last_swing_poll = now.isoformat(timespec="seconds")
+            # End-of-day confirmation scan: intraday signals are provisional
+            # (partial daily bar). One rescan on the completed bar confirms
+            # which survived to the close and submits their paper orders.
+            if (
+                self.swing_tickers and self.swing_strategies
+                and now.weekday() < 5
+                and now.strftime("%H:%M") >= "16:15"
+                and self._last_eod_date != now.strftime("%Y-%m-%d")
+            ):
+                try:
+                    self._swing_tick(now)
+                except Exception as exc:
+                    print(f"[alert] EOD swing tick error: {exc}")
+                self._last_eod_date = now.strftime("%Y-%m-%d")
                 self.last_swing_poll = now.isoformat(timespec="seconds")
             self._stop.wait(POLL_SECONDS)
 

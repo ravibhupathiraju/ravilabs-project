@@ -5,3 +5,4 @@ venv/
 *.csv
 .DS_Store
 alerts.db
+alpaca.json

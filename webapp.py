@@ -9,7 +9,7 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import alerts, backtest, bear, screener, zerodte
+from swingtrader import alerts, backtest, bear, broker, screener, zerodte
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
@@ -76,6 +76,19 @@ def api_backtest():
             # JSON cannot carry infinity; None renders as the infinity symbol.
             if s["profit_factor"] == float("inf"):
                 s["profit_factor"] = None
+            s["trade_list"] = [
+                {
+                    "ticker": t.ticker,
+                    "entry_date": t.entry_date,
+                    "exit_date": t.exit_date,
+                    "entry_price": t.entry_price,
+                    "exit_price": t.exit_price,
+                    "days_held": t.days_held,
+                    "exit_reason": t.exit_reason,
+                    "pnl_pct": t.pnl_pct,
+                }
+                for t in sorted(res.trades, key=lambda t: t.entry_date, reverse=True)
+            ]
         rows.append(s)
     rows.sort(key=lambda s: s.get("expectancy", float("-inf")), reverse=True)
     return jsonify(
@@ -163,6 +176,11 @@ def api_alerts_performance():
             kind=request.args.get("kind") or None,
         )
     )
+
+
+@app.get("/api/broker/status")
+def api_broker_status():
+    return jsonify(broker.status())
 
 
 @app.post("/api/bear/scan")

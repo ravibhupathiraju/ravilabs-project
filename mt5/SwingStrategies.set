@@ -1,0 +1,30 @@
+; Swing Trade Tracker - MT5 Strategy Tester inputs
+;
+; Load in the Strategy Tester "Inputs" tab -> Load, then set the tester to
+; Optimization = "Slow complete algorithm" and run. InpStrategy is flagged
+; for optimization with start=0 step=1 stop=6, so MT5 makes seven passes -
+; one per strategy - and the Optimization Results tab becomes the
+; strategy-comparison table (sort by Profit Factor or Expected Payoff).
+;
+; To backtest a SINGLE strategy instead, set the optimize flag on the
+; InpStrategy line below from Y to N and pick the value you want:
+;   0 RSI(2) Mean Reversion   1 Double 7s        2 Bollinger Snapback
+;   3 SMA20 Trend Pullback    4 20-Day Breakout  5 MACD Trend Cross
+;   6 Bear CRWV Pullback Score
+;
+; Symbols must match YOUR broker's naming. Many brokers suffix stock CFDs
+; (AAPL.US, AAPL.NAS, #AAPL). Edit InpSymbolList to match, or leave it
+; empty to test only the chart symbol.
+;
+; Format: name=value||start||step||stop||optimize(Y/N)
+
+InpStrategy=0||0||1||6||Y
+InpBearMinScore=45||45||5||45||N
+InpSymbolList=AAPL,MSFT,NVDA,AMZN,GOOGL,META,TSLA,AMD,AVGO,JPM,V,UNH,HD,COST,LLY,XOM,PG,KO,PEP,CRM
+InpRiskPercent=1.0||1.0||1.0||1.0||N
+InpFixedLots=1.0||1.0||1.0||1.0||N
+InpMinPrice=5.0||5.0||1.0||5.0||N
+InpMinAvgVolume=500000.0||500000.0||100000.0||500000.0||N
+InpHistoryBars=400||400||10||400||N
+InpMagic=20260713||20260713||1||20260713||N
+InpSlippage=20||20||1||20||N

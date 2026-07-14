@@ -1,0 +1,5 @@
+{
+  "key_id": "PKXXXXXXXXXXXXXXXXXX",
+  "secret_key": "your-paper-secret-key-here",
+  "notional_per_trade": 10000
+}

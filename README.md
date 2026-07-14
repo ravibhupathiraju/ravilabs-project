@@ -74,6 +74,16 @@ A third tab turns both the five 0DTE strategies and the six swing strategies int
 
 Keep `python webapp.py` running for alerts to fire (the browser tab may be closed). yfinance data lags real time by a minute or two — confirm prices on your own quotes before trading.
 
+### Paper trading (Alpaca)
+
+Swing alerts can be mirrored to a free [Alpaca](https://alpaca.markets) **paper** account so signals become real simulated orders with broker-side fills:
+
+1. Sign up at alpaca.markets (free, no funding), switch the dashboard to **Paper** mode, and generate API keys
+2. Copy `alpaca.example.json` to `alpaca.json` (git-ignored) and paste the keys; `notional_per_trade` sets the $ sizing per signal (whole shares). The standard `APCA_API_KEY_ID`/`APCA_API_SECRET_KEY` environment variables work too
+3. Restart the app — the **Paper trading (Alpaca)** panel in the alerts tab shows account equity, open positions, and pending orders
+
+How orders map to the alert lifecycle: a swing **signal** submits a GTC bracket market buy — after the close it queues and fills at the next open (the backtest's execution model), with the ATR stop and any profit target resting server-side at Alpaca, so they trigger even while this app is offline. A swing **exit** alert (signal exit, time stop, pre-earnings) cancels the legs and closes the position at market; stop/target exits usually fill broker-side first, making the close a no-op. One paper position per symbol: if two strategies signal the same ticker, the first alert owns it. The module only ever talks to the paper endpoint — it cannot place live trades.
+
 ## Bear strategy tab (TradeLab CRWV pullback score)
 
 A dedicated tab hosting a faithful port of the TradeLab "CRWV" swing model — a 0–100 scored pullback-in-uptrend system (validated to produce identical scores, levels and reasons on TradeLab's own research output):

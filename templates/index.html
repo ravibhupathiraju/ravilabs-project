@@ -240,6 +240,31 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
 </div>
 
+<h3>Paper trading (Alpaca)</h3>
+<div class="card">
+  <div id="brokerOff" style="display:none">
+    <p class="note">Not connected. Create a free paper account at <b>alpaca.markets</b>, copy the API keys from the dashboard (Paper mode), then copy <code>alpaca.example.json</code> to <code>alpaca.json</code> next to webapp.py and paste them in. Once connected, every swing signal is mirrored as a real paper order: a GTC bracket buy that fills at the next open, with the ATR stop (and target) resting server-side, and the position is flattened when the exit alert fires.</p>
+  </div>
+  <div id="brokerErr" style="display:none"><p class="note" style="color:#e5534b"></p></div>
+  <div id="brokerOn" style="display:none">
+    <p id="brokerAcct" class="note"></p>
+    <h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Open paper positions</h4>
+    <table style="margin:0">
+      <thead><tr><th>Symbol</th><th>Qty</th><th>Avg entry</th><th>Current</th><th>Unrealized P/L</th></tr></thead>
+      <tbody id="brokerPosBody"></tbody>
+    </table>
+    <h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Pending paper orders</h4>
+    <table style="margin:0 0 0.5rem">
+      <thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Status</th><th>Submitted</th></tr></thead>
+      <tbody id="brokerOrdBody"></tbody>
+    </table>
+  </div>
+  <div class="actions" style="margin-top:0.5rem">
+    <button class="run secondary" id="brokerRefreshBtn">Refresh broker</button>
+    <span class="status" id="brokerStatus"></span>
+  </div>
+</div>
+
 <h3>Alert history</h3>
 <div class="card controls">
   <div class="field">
@@ -372,7 +397,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
     btn.classList.add("active");
     ["swingTab", "zdteTab", "alertTab", "bearTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
-    if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); }
+    if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); loadBroker(); }
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
   })
 );
@@ -453,11 +478,31 @@ function renderBacktest(data) {
     }
     const pf = s.profit_factor === null ? "\u221e" : s.profit_factor.toFixed(2);
     tr.innerHTML =
-      `<td>${s.strategy}</td><td>${s.trades}</td><td>${s.win_rate.toFixed(1)}%</td>` +
+      `<td style="cursor:pointer" title="Click to show individual trades">\u2795 ${s.strategy}</td><td>${s.trades}</td><td>${s.win_rate.toFixed(1)}%</td>` +
       `<td>${s.avg_win.toFixed(2)}%</td><td>${s.avg_loss.toFixed(2)}%</td>` +
       `<td>${s.expectancy.toFixed(2)}%</td><td>${pf}</td>` +
       `<td>${s.avg_hold.toFixed(1)}d</td><td>${s.max_drawdown.toFixed(1)}%</td>`;
     tbody.appendChild(tr);
+
+    const detail = document.createElement("tr");
+    detail.style.display = "none";
+    const tradeRows = (s.trade_list || []).map((t) =>
+      `<tr><td>${t.ticker}</td><td>${t.entry_date}</td><td>${t.entry_price.toFixed(2)}</td>` +
+      `<td>${t.exit_date}</td><td>${t.exit_price.toFixed(2)}</td>` +
+      `<td style="color:${t.pnl_pct >= 0 ? "#38c793" : "#e5534b"}">${t.pnl_pct >= 0 ? "+" : ""}${t.pnl_pct.toFixed(2)}%</td>` +
+      `<td>${t.days_held}d</td><td class="note">${t.exit_reason}</td></tr>`).join("");
+    detail.innerHTML =
+      `<td colspan="9">` +
+      `<h4 style="margin:0.5rem 0 0.25rem;color:#9aa3b5">${s.strategy} \u2014 individual trades (newest first)</h4>` +
+      `<table style="margin:0 0 0.75rem"><thead><tr><th>Ticker</th><th>Entry date</th><th>Entry</th><th>Exit date</th><th>Exit</th><th>P/L</th><th>Held</th><th>Exit reason</th></tr></thead>` +
+      `<tbody>${tradeRows}</tbody></table></td>`;
+    tbody.appendChild(detail);
+    tr.cells[0].addEventListener("click", () => {
+      const open = detail.style.display !== "none";
+      detail.style.display = open ? "none" : "table-row";
+      tr.cells[0].innerHTML = (open ? "\u2795 " : "\u2796 ") + s.strategy;
+    });
+
     labels.push(s.strategy);
     wr.push(+s.win_rate.toFixed(1));
     ex.push(+s.expectancy.toFixed(2));
@@ -659,6 +704,43 @@ $("aStopBtn").addEventListener("click", async () => {
   const data = await callApi("/api/alerts/stop", {}, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
   renderAlertStatus(data);
 });
+
+async function loadBroker() {
+  const st = $("brokerStatus");
+  st.textContent = "";
+  try {
+    const d = await (await fetch("/api/broker/status")).json();
+    $("brokerOff").style.display = d.enabled ? "none" : "block";
+    $("brokerErr").style.display = d.enabled && d.error ? "block" : "none";
+    $("brokerOn").style.display = d.enabled && !d.error ? "block" : "none";
+    if (!d.enabled) return;
+    if (d.error) {
+      $("brokerErr").querySelector("p").textContent = `Broker error: ${d.error}`;
+      return;
+    }
+    const a = d.account;
+    $("brokerAcct").innerHTML =
+      `<b>Equity $${a.equity.toLocaleString(undefined, {maximumFractionDigits: 0})}</b>` +
+      ` &nbsp;|&nbsp; cash $${a.cash.toLocaleString(undefined, {maximumFractionDigits: 0})}` +
+      ` &nbsp;|&nbsp; buying power $${a.buying_power.toLocaleString(undefined, {maximumFractionDigits: 0})}` +
+      ` &nbsp;|&nbsp; sizing $${d.notional_per_trade.toLocaleString()} per signal`;
+    $("brokerPosBody").innerHTML = d.positions.length
+      ? d.positions.map((p) =>
+          `<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${p.avg_entry.toFixed(2)}</td>` +
+          `<td>${p.current.toFixed(2)}</td>` +
+          `<td style="color:${p.unrealized_pl >= 0 ? "#38c793" : "#e5534b"}">` +
+          `$${p.unrealized_pl.toFixed(2)} (${p.unrealized_plpc >= 0 ? "+" : ""}${p.unrealized_plpc.toFixed(2)}%)</td></tr>`).join("")
+      : `<tr><td colspan="5">No open paper positions.</td></tr>`;
+    $("brokerOrdBody").innerHTML = d.open_orders.length
+      ? d.open_orders.map((o) =>
+          `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.type}</td>` +
+          `<td>${o.qty || ""}</td><td>${o.status}</td><td class="note">${o.submitted_at}</td></tr>`).join("")
+      : `<tr><td colspan="6">No pending paper orders.</td></tr>`;
+  } catch (e) {
+    st.textContent = `broker status failed: ${e}`;
+  }
+}
+$("brokerRefreshBtn").addEventListener("click", loadBroker);
 
 async function loadAlertHistory() {
   const syms = $("ahSyms").value.split(/[\s,]+/).filter(Boolean).map((s) => s.toUpperCase());
