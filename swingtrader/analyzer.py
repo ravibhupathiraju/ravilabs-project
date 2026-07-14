@@ -603,9 +603,18 @@ def chart_data(ticker: str, tf: str = "1d") -> dict:
     mid = rsi.rolling(20).mean()
     sd = rsi.rolling(20).std()
 
-    def line(series):
-        return [{"time": t, "value": round(float(v), 2)}
-                for t, v in zip(times, series) if pd.notna(v)]
+    def line(series, pad: bool = False):
+        """pad=True emits whitespace items ({time} with no value) for NaN
+        warmup bars. The RSI pane needs this: the two panes are synced by
+        logical bar index, so every RSI-pane series must span the exact same
+        bar list as the candles or the panes render shifted."""
+        pts = []
+        for t, v in zip(times, series):
+            if pd.notna(v):
+                pts.append({"time": t, "value": round(float(v), 2)})
+            elif pad:
+                pts.append({"time": t})
+        return pts
 
     # Session VWAP for intraday timeframes: resets every day. The first bar
     # of each session is emitted as whitespace ({time} without a value) so
@@ -633,10 +642,11 @@ def chart_data(ticker: str, tf: str = "1d") -> dict:
         "candles": candles,
         "trama": line(trama),
         "vwap": vwap_pts,
-        "rsi": line(rsi),
-        "rsi_bb_mid": line(mid),
-        "rsi_bb_up": line(mid + 2 * sd),
-        "rsi_bb_lo": line(mid - 2 * sd),
+        "rsi": line(rsi, pad=True),
+        "rsi_bb_mid": line(mid, pad=True),
+        "rsi_bb_up": line(mid + 2 * sd, pad=True),
+        "rsi_bb_lo": line(mid - 2 * sd, pad=True),
+        "rsi_now": round(float(rsi.iloc[-1]), 1) if pd.notna(rsi.iloc[-1]) else None,
         "levels": _key_levels(ticker),
         "trendlines": _trendlines(df, times),
         "divergence": _rsi_divergence(df, rsi, times),

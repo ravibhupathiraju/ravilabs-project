@@ -1209,10 +1209,13 @@ async function loadTvChart(ticker, tf, key) {
 
   // -- RSI pane: RSI(14) + Bollinger(20,2) on RSI + 30/70 bands
   const rsiSeries = rsiChart.addLineSeries({
-    color: "#4f8ef7", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
-    title: "RSI 14", ...RSI_SCALE,
+    color: "#4f8ef7", lineWidth: 2, lastValueVisible: true, title: "RSI 14",
+    priceLineVisible: true, priceLineColor: "#4f8ef7",
+    priceLineStyle: LightweightCharts.LineStyle.Dotted, priceLineWidth: 1,
+    ...RSI_SCALE,
   });
   rsiSeries.setData(d.rsi);
+  if (d.rsi_now !== null && d.rsi_now !== undefined) notes.unshift(`RSI now ${d.rsi_now}`);
   anCharts[key].rsiSeries = rsiSeries;
   for (const [k, color] of [["rsi_bb_up", "#556072"], ["rsi_bb_mid", "#3a4557"], ["rsi_bb_lo", "#556072"]]) {
     rsiChart.addLineSeries({
