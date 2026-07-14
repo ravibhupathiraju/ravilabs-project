@@ -1,5 +1,11 @@
 {
   "key_id": "PKXXXXXXXXXXXXXXXXXX",
   "secret_key": "your-paper-secret-key-here",
-  "notional_per_trade": 10000
+
+  "notional_per_trade": 10000,
+  "max_positions": 10,
+  "max_exposure_pct": 100,
+
+  "zerodte_notional": 5000,
+  "zerodte_strategies": ["vwap"]
 }

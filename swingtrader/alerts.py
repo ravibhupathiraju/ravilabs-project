@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
-from . import broker, screener, zerodte
+from . import analyzer, broker, marketdata, screener, zerodte
 from .data import load_history
 from .earnings import earnings_dates, near_earnings
 from .strategies import STRATEGIES as SWING_STRATEGIES
@@ -58,8 +58,13 @@ PLANNED_EXITS = {
     "straddle": "16:00 close (theta decay)",
 }
 
-# strategy key -> label across both alert kinds
-ALL_LABELS = {**STRATEGY_LABELS, **{k: s.label for k, s in SWING_STRATEGIES.items()}}
+# strategy key -> label across all alert kinds
+ALL_LABELS = {
+    **STRATEGY_LABELS,
+    **{k: s.label for k, s in SWING_STRATEGIES.items()},
+    "rev_bull": "Bullish Reversal",
+    "rev_bear": "Bearish Reversal",
+}
 
 
 def _swing_planned_exit(s) -> str:
@@ -74,7 +79,7 @@ _COLUMNS = [
     "kind", "alert_time", "date", "symbol", "strategy", "seq", "direction",
     "entry_time", "entry_price", "stop_price", "target_price", "atr_entry",
     "planned_exit", "exit_time", "exit_price", "pnl_pct", "exit_reason", "status",
-    "broker_order_id",
+    "broker_order_id", "broker_qty",
 ]
 
 _SCHEMA = """CREATE TABLE IF NOT EXISTS alerts (
@@ -98,6 +103,7 @@ _SCHEMA = """CREATE TABLE IF NOT EXISTS alerts (
     exit_reason TEXT,              -- swing: stop/profit_target/signal/time_stop/pre_earnings
     status TEXT NOT NULL DEFAULT 'open',  -- swing: signal -> open -> closed
     broker_order_id TEXT,          -- Alpaca paper order id when mirrored to the broker
+    broker_qty INTEGER,            -- shares actually ordered at the broker
     UNIQUE(date, symbol, strategy, seq)
 )"""
 
@@ -107,12 +113,33 @@ def _db() -> sqlite3.Connection:
     con.row_factory = sqlite3.Row
     con.execute(_SCHEMA)
     cols = {r["name"] for r in con.execute("PRAGMA table_info(alerts)")}
-    if not set(_COLUMNS) <= cols:  # older schema: rebuild, keeping shared columns
-        keep = ", ".join(c for c in _COLUMNS if c in cols)
-        con.execute("ALTER TABLE alerts RENAME TO alerts_old")
-        con.execute(_SCHEMA)
-        con.execute(f"INSERT INTO alerts ({keep}) SELECT {keep} FROM alerts_old")
+    if set(_COLUMNS) <= cols:
+        return con
+
+    # Older schema: add the missing columns in place. ALTER TABLE ADD COLUMN
+    # is atomic and keeps every row, unlike a rename-copy-drop rebuild (which
+    # could strand data in an `alerts_old` table if it died mid-way).
+    types = {"seq": "INTEGER", "broker_qty": "INTEGER"}
+    for col in _COLUMNS:
+        if col not in cols:
+            con.execute(
+                f"ALTER TABLE alerts ADD COLUMN {col} {types.get(col, 'REAL' if col in ('entry_price', 'stop_price', 'target_price', 'atr_entry', 'exit_price', 'pnl_pct') else 'TEXT')}"
+            )
+    con.commit()
+
+    # Recover rows stranded by an interrupted pre-1.1 rebuild, if any.
+    stranded = con.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='alerts_old'"
+    ).fetchone()
+    if stranded:
+        old_cols = {r["name"] for r in con.execute("PRAGMA table_info(alerts_old)")}
+        keep = ", ".join(c for c in _COLUMNS if c in old_cols)
+        con.execute(
+            f"INSERT OR IGNORE INTO alerts ({keep}) SELECT {keep} FROM alerts_old"
+        )
         con.execute("DROP TABLE alerts_old")
+        con.commit()
+        print("[alerts] recovered rows from an interrupted schema migration")
     return con
 
 
@@ -135,7 +162,7 @@ def history(
     if symbols:
         q += f" AND symbol IN ({','.join('?' * len(symbols))})"
         params.extend(s.upper() for s in symbols)
-    if kind in ("0dte", "swing"):
+    if kind in ("0dte", "swing", "reversal"):
         q += " AND kind = ?"
         params.append(kind)
     if strategy:
@@ -158,7 +185,7 @@ def performance(strategy: str | None = None, kind: str | None = None) -> dict:
     if strategy:
         q += " AND strategy = ?"
         params.append(strategy)
-    if kind in ("0dte", "swing"):
+    if kind in ("0dte", "swing", "reversal"):
         q += " AND kind = ?"
         params.append(kind)
     with _db() as con:
@@ -224,17 +251,12 @@ def _toast(title: str, body: str) -> None:
 # --------------------------------------------------------------------------
 
 def _load_today(yf_sym: str) -> pd.DataFrame:
-    try:
-        df = yf.Ticker(yf_sym).history(period="1d", interval="5m", auto_adjust=True)
-    except Exception as exc:
-        print(f"[alert] intraday fetch failed for {yf_sym}: {exc}")
-        return pd.DataFrame()
-    if df is None or df.empty:
-        return pd.DataFrame()
-    df = _flatten(df)
-    if getattr(df.index, "tz", None) is not None:
-        df.index = df.index.tz_convert("America/New_York").tz_localize(None)
-    return df.dropna(subset=["Close"])
+    """Today's 5-minute bars: Alpaca IEX (real-time) with yfinance fallback.
+
+    yf_sym is the Yahoo name ("SPY", "^GSPC"); marketdata handles the mapping
+    and falls back to yfinance for cash indices and when Alpaca is down.
+    """
+    return marketdata.intraday(yf_sym, yf_symbol=yf_sym)
 
 
 def _prev_close_and_sigma(
@@ -574,18 +596,19 @@ def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
         and not row["broker_order_id"]
         and not _market_hours(now)
     ):
-        order_id = broker.buy_bracket(
+        order = broker.buy_bracket(
             sig["ticker"], sig["close"], sig["stop"], sig.get("target")
         )
-        if order_id:
+        if order:
             with _db() as con:
                 con.execute(
-                    "UPDATE alerts SET broker_order_id=? WHERE id=?",
-                    (order_id, row["id"]),
+                    "UPDATE alerts SET broker_order_id=?, broker_qty=? WHERE id=?",
+                    (order["id"], order["qty"], row["id"]),
                 )
             _toast(
-                f"PAPER ORDER: {sig['ticker']} — {strat.label}",
-                f"Bracket buy submitted to Alpaca paper (fills at next open)",
+                f"PAPER ORDER: {sig['ticker']} {order['qty']} shares — {strat.label}",
+                f"~${order['notional']:,.0f} bracket buy sent to Alpaca paper"
+                f" (fills at next open) | Stop {sig['stop']:.2f}",
             )
 
 
@@ -703,11 +726,14 @@ class AlertMonitor:
         self.swing_universe: str | None = None
         self.swing_tickers: list[str] = []
         self.swing_strategies: list[str] = []
+        self.reversal_tickers: list[str] = []
+        self._last_rev_ts: float | None = None
         self.earnings_buffer: int = 3
         self.last_poll: str | None = None
         self.last_swing_poll: str | None = None
         self._last_swing_ts: float | None = None
         self._last_eod_date: str | None = None
+        self._flattened_date: str | None = None
         self._reconciled_key: str | None = None
         self.started_at: str | None = None
 
@@ -715,36 +741,62 @@ class AlertMonitor:
 
     def start(
         self,
-        symbols: list[str],
-        strategies: list[str],
+        symbols: list[str] | None = None,
+        strategies: list[str] | None = None,
         swing_universe: str | None = None,
         swing_strategies: list[str] | None = None,
         swing_tickers: list[str] | None = None,
-        earnings_buffer: int = 3,
+        earnings_buffer: int | None = None,
+        reversal_tickers: list[str] | None = None,
+        configure: tuple[str, ...] = ("zerodte", "swing"),
     ) -> dict:
-        if self.running:
-            return self.status()
-        # An empty symbols list disables 0DTE alerts (swing-only monitor).
-        self.symbols = [s.upper() for s in symbols if s.upper() in SYMBOLS]
-        self.strategies = [s for s in strategies if s in STRATEGY_LABELS] or list(STRATEGY_LABELS)
-        self.swing_universe = swing_universe if swing_universe and swing_universe != "none" else None
-        self.swing_strategies = [
-            s for s in (swing_strategies or []) if s in SWING_STRATEGIES
-        ]
-        self.swing_tickers = []
-        if self.swing_universe and self.swing_strategies:
-            base: list[str] = []
-            if self.swing_universe != "custom":
-                try:
-                    base = get_universe(self.swing_universe)
-                except Exception as exc:
-                    print(f"[alert] failed to load universe {self.swing_universe}: {exc}")
-            extra = [t.upper() for t in (swing_tickers or []) if t.strip()]
-            seen = set()
-            self.swing_tickers = [
-                t for t in base + extra if not (t in seen or seen.add(t))
+        """Start (or reconfigure) the monitor.
+
+        ``configure`` says which channels this call owns. The 0DTE tab sends
+        ("zerodte",), the swing/bear tabs send ("swing",) and the analyzer tab
+        sends ("reversal",), so starting one never wipes the others -- all
+        three channels run in the same background loop.
+        """
+        if "reversal" in configure:
+            seen: set = set()
+            self.reversal_tickers = [
+                t.upper() for t in (reversal_tickers or [])
+                if t.strip() and not (t.upper() in seen or seen.add(t.upper()))
             ]
-        self.earnings_buffer = int(earnings_buffer)
+            self._last_rev_ts = None  # scan immediately with the new list
+        if "zerodte" in configure:
+            # An empty symbols list disables 0DTE alerts.
+            self.symbols = [s.upper() for s in (symbols or []) if s.upper() in SYMBOLS]
+            self.strategies = [
+                s for s in (strategies or []) if s in STRATEGY_LABELS
+            ] or list(STRATEGY_LABELS)
+
+        if "swing" in configure:
+            self.swing_universe = (
+                swing_universe if swing_universe and swing_universe != "none" else None
+            )
+            self.swing_strategies = [
+                s for s in (swing_strategies or []) if s in SWING_STRATEGIES
+            ]
+            self.swing_tickers = []
+            if self.swing_universe and self.swing_strategies:
+                base: list[str] = []
+                if self.swing_universe != "custom":
+                    try:
+                        base = get_universe(self.swing_universe)
+                    except Exception as exc:
+                        print(f"[alert] failed to load universe {self.swing_universe}: {exc}")
+                extra = [t.upper() for t in (swing_tickers or []) if t.strip()]
+                seen = set()
+                self.swing_tickers = [
+                    t for t in base + extra if not (t in seen or seen.add(t))
+                ]
+            if earnings_buffer is not None:
+                self.earnings_buffer = int(earnings_buffer)
+            self._last_swing_ts = None  # rescan immediately with the new config
+
+        if self.running:  # already polling: the new config takes effect next tick
+            return self.status()
         self._last_swing_ts = None
         # A start after 16:15 makes the immediate first tick the EOD scan.
         now = datetime.now(NY)
@@ -778,11 +830,13 @@ class AlertMonitor:
             "swing_universe": self.swing_universe,
             "swing_tickers": len(self.swing_tickers),
             "swing_strategies": self.swing_strategies,
+            "reversal_tickers": self.reversal_tickers,
             "started_at": self.started_at,
             "last_poll": self.last_poll,
             "last_swing_poll": self.last_swing_poll,
             "market_open": self._market_open(now),
             "now_et": now.strftime("%Y-%m-%d %H:%M:%S ET"),
+            "paper_0dte": broker.zerodte_strategies() if broker.enabled() else [],
         }
 
     # -- internals ----------------------------------------------------------
@@ -813,6 +867,21 @@ class AlertMonitor:
                 except Exception as exc:
                     print(f"[alert] poll error: {exc}")
                 self.last_poll = now.isoformat(timespec="seconds")
+            # 0DTE safety net: flatten any paper position in the monitored
+            # symbols just before the close. Nothing intraday carries
+            # overnight, even if an exit alert was missed. Swing positions
+            # are untouched (the sweep is scoped to the 0DTE symbols).
+            if (
+                self.symbols
+                and now.weekday() < 5
+                and "15:55" <= now.strftime("%H:%M") <= "16:05"
+                and self._flattened_date != now.strftime("%Y-%m-%d")
+            ):
+                try:
+                    broker.flatten(self.symbols)
+                except Exception as exc:
+                    print(f"[alert] flatten error: {exc}")
+                self._flattened_date = now.strftime("%Y-%m-%d")
             # Swing tick: once immediately on start (catches the latest close's
             # signals even outside market hours), then every 15 min while open.
             if self.swing_tickers and self.swing_strategies and (
@@ -828,6 +897,20 @@ class AlertMonitor:
                     print(f"[alert] swing tick error: {exc}")
                 self._last_swing_ts = time.time()
                 self.last_swing_poll = now.isoformat(timespec="seconds")
+            # Reversal watch (analyzer tab): once on start, then every 15 min
+            # while the market is open. Alert-only -- never trades.
+            if self.reversal_tickers and (
+                self._last_rev_ts is None
+                or (
+                    self._market_open(now)
+                    and time.time() - self._last_rev_ts >= SWING_POLL_SECONDS
+                )
+            ):
+                try:
+                    self._reversal_tick(now)
+                except Exception as exc:
+                    print(f"[alert] reversal tick error: {exc}")
+                self._last_rev_ts = time.time()
             # End-of-day confirmation scan: intraday signals are provisional
             # (partial daily bar). One rescan on the completed bar confirms
             # which survived to the close and submits their paper orders.
@@ -844,6 +927,33 @@ class AlertMonitor:
                 self._last_eod_date = now.strftime("%Y-%m-%d")
                 self.last_swing_poll = now.isoformat(timespec="seconds")
             self._stop.wait(POLL_SECONDS)
+
+    def _reversal_tick(self, now: datetime) -> None:
+        """Toast + log fresh reversal evidence on the watched tickers.
+
+        Deduped per (date, symbol, direction) by the alerts UNIQUE key, so a
+        reversal that stays in place all day alerts once, not every 15 min.
+        """
+        today = now.strftime("%Y-%m-%d")
+        for ev in analyzer.scan_reversals(self.reversal_tickers):
+            key = "rev_bull" if ev["direction"] == "bullish" else "rev_bear"
+            with _db() as con:
+                cur = con.execute(
+                    """INSERT OR IGNORE INTO alerts (kind, alert_time, date, symbol,
+                        strategy, seq, direction, entry_time, entry_price,
+                        planned_exit, status)
+                        VALUES ('reversal',?,?,?,?,0,?,?,?,?,'signal')""",
+                    (
+                        now.strftime("%H:%M:%S"), today, ev["ticker"], key,
+                        "long" if ev["direction"] == "bullish" else "short",
+                        now.strftime("%H:%M"), ev["price"], ev["what"],
+                    ),
+                )
+            if cur.rowcount:
+                _toast(
+                    f"REVERSAL ({ev['direction'].upper()}): {ev['ticker']} @ {ev['price']:.2f}",
+                    ev["what"] + " — informational alert, no order placed",
+                )
 
     def _swing_tick(self, now: datetime) -> None:
         strats = [SWING_STRATEGIES[k] for k in self.swing_strategies]
@@ -882,7 +992,8 @@ class AlertMonitor:
         nth = f" #{seq + 1}" if seq else ""
         with _db() as con:
             row = con.execute(
-                "SELECT id, status FROM alerts WHERE date=? AND symbol=? AND strategy=? AND seq=?",
+                """SELECT id, status, broker_order_id FROM alerts
+                    WHERE date=? AND symbol=? AND strategy=? AND seq=?""",
                 (date, sym, name, seq),
             ).fetchone()
 
@@ -905,9 +1016,35 @@ class AlertMonitor:
                     f" | Exit: {PLANNED_EXITS.get(name, SESSION_END)}",
                 )
                 row = con.execute(
-                    "SELECT id, status FROM alerts WHERE date=? AND symbol=? AND strategy=? AND seq=?",
+                    """SELECT id, status, broker_order_id FROM alerts
+                        WHERE date=? AND symbol=? AND strategy=? AND seq=?""",
                     (date, sym, name, seq),
                 ).fetchone()
+
+                # Paper trade: only the strategies in broker.zerodte_strategies
+                # (VWAP by default). Every other strategy still alerts and logs
+                # above -- it just never reaches the broker. Entries are placed
+                # live during the session, never after the exit already printed.
+                if not res.get("exited") and self._market_open(now) and \
+                        now.strftime("%H:%M") < SESSION_END:
+                    order = broker.zerodte_order(
+                        sym, name, res["direction"], res["entry_price"]
+                    )
+                    if order:
+                        con.execute(
+                            "UPDATE alerts SET broker_order_id=?, broker_qty=? WHERE id=?",
+                            (order["id"], order["qty"], row["id"]),
+                        )
+                        row = con.execute(
+                            "SELECT id, status, broker_order_id FROM alerts WHERE id=?",
+                            (row["id"],),
+                        ).fetchone()
+                        _toast(
+                            f"PAPER 0DTE{nth}: {sym} {order['side'].upper()} "
+                            f"{order['qty']} shares — {label}",
+                            f"~${order['notional']:,.0f} market order sent to Alpaca paper"
+                            f" | Exit: {PLANNED_EXITS.get(name, SESSION_END)}",
+                        )
 
             if row["status"] == "open" and res.get("exited"):
                 con.execute(
@@ -921,6 +1058,8 @@ class AlertMonitor:
                     f"Exit {res['exit_time']} @ {res['exit_price']:.2f}"
                     f" (entered {res['entry_time']} @ {res['entry_price']:.2f})",
                 )
+                if row["broker_order_id"]:
+                    broker.close(sym)   # VWAP touched, or the session ended
 
 
 MONITOR = AlertMonitor()

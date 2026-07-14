@@ -82,7 +82,22 @@ Swing alerts can be mirrored to a free [Alpaca](https://alpaca.markets) **paper*
 2. Copy `alpaca.example.json` to `alpaca.json` (git-ignored) and paste the keys; `notional_per_trade` sets the $ sizing per signal (whole shares). The standard `APCA_API_KEY_ID`/`APCA_API_SECRET_KEY` environment variables work too
 3. Restart the app — the **Paper trading (Alpaca)** panel in the alerts tab shows account equity, open positions, and pending orders
 
-How orders map to the alert lifecycle: a swing **signal** submits a GTC bracket market buy — after the close it queues and fills at the next open (the backtest's execution model), with the ATR stop and any profit target resting server-side at Alpaca, so they trigger even while this app is offline. A swing **exit** alert (signal exit, time stop, pre-earnings) cancels the legs and closes the position at market; stop/target exits usually fill broker-side first, making the close a no-op. One paper position per symbol: if two strategies signal the same ticker, the first alert owns it. The module only ever talks to the paper endpoint — it cannot place live trades.
+The panel appears on both the **Swing strategies** and **0DTE alerts** tabs (same account, different rules per kind).
+
+**Swing orders**: a signal submits a GTC **bracket** market buy — after the close it queues and fills at the next open (the backtest's execution model), with the ATR stop and any profit target resting server-side at Alpaca, so they trigger even while this app is offline. An exit alert (signal exit, time stop, pre-earnings) closes the position; stop/target exits usually fill broker-side first, making the close a no-op. Orders are only submitted on **completed daily bars** — intraday signals are provisional (partial bar), so a 16:15 ET rescan confirms which survived to the close before anything is sent.
+
+**0DTE orders**: alerting and paper trading are deliberately decoupled. **All five strategies alert and log to Alert history; only the strategies in `zerodte_strategies` are actually traded** (default: `["vwap"]`). 0DTE orders are plain **day market** orders, long or short, sized from `zerodte_notional` — not brackets, because the VWAP exit is a moving level, not a fixed price. The monitor closes the position when its exit alert fires (VWAP touched), and a **15:55 ET sweep flattens any 0DTE position still open**, so nothing intraday carries overnight (the sweep is scoped to the 0DTE symbols and never touches swing positions). **SPX is alert-only** — it is a cash index, not tradable as an equity; SPY, QQQ and IWM trade normally, including short.
+
+**Guardrails** (checked against the live account before every order): at most `max_positions` concurrent positions (default 10), total exposure ≤ `max_exposure_pct` of equity (default 100 = no leverage), and one position per symbol. A full-universe scan can produce 40+ simultaneous signals; without these caps they would blow past the account's overnight buying power and be rejected in a race. Signals beyond a cap are skipped and logged, never queued. Share counts are recorded per alert and shown in the **Paper** column of Alert history.
+
+The module only ever talks to the paper endpoint — it cannot place live trades.
+
+## Data sources (hybrid)
+
+- **yfinance** — daily OHLCV history for backtests, scans and swing tracking (long history, split/dividend-adjusted), plus intraday fallback
+- **Alpaca Market Data (free IEX feed)** — live 5-minute bars and latest quotes for the 0DTE monitor and the Analyzer, using the same `alpaca.json` credentials as paper trading. Real-time prices (yfinance lags 1–2 min), and analysis prices come from the same venue paper orders fill on
+
+Every Alpaca call falls back to yfinance automatically (no keys, cash indices like SPX/^GSPC, request failure), so the app runs unchanged without credentials. Note the free IEX feed reports IEX-exchange volume only (~3% of consolidated tape): prices are reliable, but volume-vs-average comparisons always use consolidated daily-bar volume — the code handles this. Earnings calendar still comes from Yahoo, which has been flaky; a Finnhub integration is the planned fix.
 
 ## Bear strategy tab (TradeLab CRWV pullback score)
 

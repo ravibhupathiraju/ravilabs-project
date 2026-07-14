@@ -44,6 +44,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   <button class="tab" data-tab="zdteTab">0DTE intraday</button>
   <button class="tab" data-tab="alertTab">0DTE alerts</button>
   <button class="tab" data-tab="bearTab">Bear strategy</button>
+  <button class="tab" data-tab="analyzerTab">Analyzer</button>
 </div>
 
 <!-- ============ SWING TAB ============ -->
@@ -131,6 +132,9 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </table>
   <p class="note"><b>How to read this:</b> every row is a long (buy) setup that triggered on the signal date's close. The playbook, matching the backtest exactly: <b>buy at the next session's open</b>; place the protective stop at <i>your entry price &minus; the strategy's ATR multiple</i> (the Stop shown assumes entry &asymp; signal close, so recompute from your actual fill); if a Target is shown, take profit there (entry + target ATR multiple); otherwise exit when the strategy's exit signal fires or the time stop is reached &mdash; hover over the strategy name to see its rules. Tip: <b>Start swing alerts</b> automates all of this &mdash; it fills the entry at the open, fixes the exact stop/target, and notifies you on every exit. Educational use only; not financial advice.</p>
 </div>
+
+<h3>Paper trading (Alpaca)</h3>
+<div class="card" id="brokerBox-sw" data-scope="swing"></div>
 </div>
 
 <!-- ============ 0DTE TAB ============ -->
@@ -206,29 +210,6 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
       <label class="check"><input type="checkbox" name="astrat" value="straddle" checked> Expected-Move Straddle Sell</label>
     </div>
   </div>
-  <div class="field">
-    <label for="aUniverse">Swing ticker universe</label>
-    <select id="aUniverse">
-      {% for u in universes %}
-      <option value="{{ u.key }}">{{ u.label }} ({{ u.count }})</option>
-      {% endfor %}
-      <option value="none">Disable swing alerts</option>
-    </select>
-  </div>
-  <div class="field">
-    <label for="aBuffer">Earnings buffer (&plusmn; days)</label>
-    <input type="number" id="aBuffer" value="3" min="0">
-  </div>
-  <div class="field wide">
-    <label>Swing strategies to monitor</label>
-    <div class="checks">
-      {% for s in strategies %}
-      <label class="check" title="{{ s.description }}">
-        <input type="checkbox" name="aswing" value="{{ s.name }}" checked> {{ s.label }}
-      </label>
-      {% endfor %}
-    </div>
-  </div>
   <div class="actions">
     <button class="run" id="aStartBtn">Start monitor</button>
     <button class="run secondary" id="aStopBtn">Stop monitor</button>
@@ -236,34 +217,12 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
   <div class="field wide">
     <p class="note" id="aStatusLine">Monitor not running.</p>
-    <p class="note"><b>0DTE:</b> while the market is open (9:30&ndash;16:00 ET, Mon&ndash;Fri) the monitor polls yfinance every 60 seconds, fires a Windows desktop notification when a strategy signals an entry (with entry time, price, stop, and planned exit), and another when the trade exits. <b>Swing:</b> the selected universe is scanned every 15 minutes (plus once when the monitor starts, so evening starts still catch the day's close signals). A signal alert fires on the setup; an entry alert fires when the position fills at the next session's open (with the exact stop and any target); an exit alert fires on stop, target, signal exit, time stop, or pre-earnings close &mdash; exactly the backtest's rules. Data lags real time by a minute or two &mdash; confirm prices on your own quotes before trading. Keep this app running for alerts to fire; the browser tab may be closed.</p>
+    <p class="note">While the market is open (9:30&ndash;16:00 ET, Mon&ndash;Fri) the monitor polls yfinance every 60 seconds, fires a Windows desktop notification when a strategy signals an entry (with entry time, price, stop, and planned exit), and another when the trade exits. <b>All five strategies checked above are alerted and logged to Alert history.</b> Paper trading is separate and deliberately narrower &mdash; see the panel below. Swing alerts are configured on the Swing strategies tab; the two run independently, so starting this monitor does not disturb them. Data lags real time by a minute or two. Keep this app running for alerts to fire; the browser tab may be closed.</p>
   </div>
 </div>
 
 <h3>Paper trading (Alpaca)</h3>
-<div class="card">
-  <div id="brokerOff" style="display:none">
-    <p class="note">Not connected. Create a free paper account at <b>alpaca.markets</b>, copy the API keys from the dashboard (Paper mode), then copy <code>alpaca.example.json</code> to <code>alpaca.json</code> next to webapp.py and paste them in. Once connected, every swing signal is mirrored as a real paper order: a GTC bracket buy that fills at the next open, with the ATR stop (and target) resting server-side, and the position is flattened when the exit alert fires.</p>
-  </div>
-  <div id="brokerErr" style="display:none"><p class="note" style="color:#e5534b"></p></div>
-  <div id="brokerOn" style="display:none">
-    <p id="brokerAcct" class="note"></p>
-    <h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Open paper positions</h4>
-    <table style="margin:0">
-      <thead><tr><th>Symbol</th><th>Qty</th><th>Avg entry</th><th>Current</th><th>Unrealized P/L</th></tr></thead>
-      <tbody id="brokerPosBody"></tbody>
-    </table>
-    <h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Pending paper orders</h4>
-    <table style="margin:0 0 0.5rem">
-      <thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Status</th><th>Submitted</th></tr></thead>
-      <tbody id="brokerOrdBody"></tbody>
-    </table>
-  </div>
-  <div class="actions" style="margin-top:0.5rem">
-    <button class="run secondary" id="brokerRefreshBtn">Refresh broker</button>
-    <span class="status" id="brokerStatus"></span>
-  </div>
-</div>
+<div class="card" id="brokerBox-a" data-scope="0dte"></div>
 
 <h3>Alert history</h3>
 <div class="card controls">
@@ -281,6 +240,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
       <option value="">All alerts</option>
       <option value="0dte">0DTE only</option>
       <option value="swing">Swing only</option>
+      <option value="reversal">Reversals only</option>
     </select>
   </div>
   <div class="field">
@@ -294,8 +254,8 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 </div>
 
 <table>
-  <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Status</th></tr></thead>
-  <tbody id="ahBody"><tr><td colspan="14">No alerts recorded yet.</td></tr></tbody>
+  <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Paper</th><th>Status</th></tr></thead>
+  <tbody id="ahBody"><tr><td colspan="15">No alerts recorded yet.</td></tr></tbody>
 </table>
 <p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Educational use only; not financial advice.</p>
 </div>
@@ -386,6 +346,35 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 <p class="note">The full loop: the weekly research says what the edge <i>should</i> be; the scanner ranks today's candidates; alerts log every live signal (score &ge; 45 before the market bonus) with its fill, 1.5&times;ATR stop and 3&times;ATR target; and this log + the performance panel show what the strategy <i>actually</i> delivered &mdash; so live results can be compared against the research over time. Educational use only; not financial advice.</p>
 </div>
 
+<!-- ============ ANALYZER TAB ============ -->
+<div id="analyzerTab" style="display:none">
+<div class="card controls">
+  <div class="field wide">
+    <label for="anTickers">Tickers to analyze (comma or space separated, max 20)</label>
+    <input type="text" id="anTickers" placeholder="e.g. NVDA, TSLA, AAPL">
+  </div>
+  <div class="actions">
+    <button class="run" id="anBtn">Analyze</button>
+    <button class="run secondary" id="anRevBtn">Start reversal alerts</button>
+    <button class="run secondary" id="anRevStopBtn">Stop monitor</button>
+    <span class="status" id="anStatus"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" id="anStatusLine"></p>
+    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and charts. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+  </div>
+</div>
+
+<div id="anResults" style="display:none">
+  <h3>Analysis <span id="anMeta" class="meta"></span></h3>
+  <table>
+    <thead><tr><th></th><th>Ticker</th><th>Last</th><th>Swing view</th><th>Day view</th><th id="anEodHead">EOD est.</th><th>Week est.</th><th>Reversal evidence</th></tr></thead>
+    <tbody id="anBody"></tbody>
+  </table>
+  <p class="note"><b>Reading the projections:</b> the point value is a drift estimate and the range is a &plusmn;1&sigma; statistical cone from 20-day realized volatility &mdash; the close should land inside it roughly 2 times out of 3. It says how far price can plausibly travel, <b>not</b> which way it will go; direction conviction comes from the scores. Educational use only; not financial advice.</p>
+</div>
+</div>
+
 <script>
 const $ = (id) => document.getElementById(id);
 let wrChart, exChart, zwrChart, zexChart;
@@ -395,8 +384,9 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
+    if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); loadBroker(); }
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
   })
@@ -668,10 +658,10 @@ refreshAlertStatus(); // initial load (swing tab is visible first)
 
 // Swing-tab alert controls: start a swing-only monitor over EVERY ticker
 // (watchlist + S&P 100 + any custom list), with this tab's strategies/buffer.
+// Swing tab owns only the swing channel: 0DTE alerts keep running untouched.
 $("swAlertBtn").addEventListener("click", async () => {
   const body = {
-    symbols: [],            // 0DTE alerts stay off when starting from this tab
-    strategies: [],
+    configure: ["swing"],
     swing_universe: "all",
     swing_strategies: [...document.querySelectorAll("input[name=strategy]:checked")].map((c) => c.value),
     swing_tickers: $("tickers").value.split(/[\s,]+/).filter(Boolean),
@@ -680,6 +670,7 @@ $("swAlertBtn").addEventListener("click", async () => {
   if (!body.swing_strategies.length) { $("status").textContent = "Error: select at least one strategy"; return; }
   const data = await callApi("/api/alerts/start", body, $("status"), [$("swAlertBtn"), $("swStopBtn")]);
   renderAlertStatus(data);
+  loadBroker();
 });
 
 $("swStopBtn").addEventListener("click", async () => {
@@ -687,17 +678,17 @@ $("swStopBtn").addEventListener("click", async () => {
   renderAlertStatus(data);
 });
 
+// 0DTE tab owns only the 0DTE channel: swing alerts keep running untouched.
 $("aStartBtn").addEventListener("click", async () => {
   const body = {
+    configure: ["zerodte"],
     symbols: [...document.querySelectorAll("input[name=asym]:checked")].map((c) => c.value),
     strategies: [...document.querySelectorAll("input[name=astrat]:checked")].map((c) => c.value),
-    swing_universe: $("aUniverse").value,
-    swing_strategies: [...document.querySelectorAll("input[name=aswing]:checked")].map((c) => c.value),
-    earnings_buffer: $("aBuffer").value,
   };
   if (!body.symbols.length) { $("aStatus").textContent = "Error: select at least one symbol"; return; }
   const data = await callApi("/api/alerts/start", body, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
   renderAlertStatus(data);
+  loadBroker();
 });
 
 $("aStopBtn").addEventListener("click", async () => {
@@ -705,42 +696,71 @@ $("aStopBtn").addEventListener("click", async () => {
   renderAlertStatus(data);
 });
 
-async function loadBroker() {
-  const st = $("brokerStatus");
-  st.textContent = "";
-  try {
-    const d = await (await fetch("/api/broker/status")).json();
-    $("brokerOff").style.display = d.enabled ? "none" : "block";
-    $("brokerErr").style.display = d.enabled && d.error ? "block" : "none";
-    $("brokerOn").style.display = d.enabled && !d.error ? "block" : "none";
-    if (!d.enabled) return;
-    if (d.error) {
-      $("brokerErr").querySelector("p").textContent = `Broker error: ${d.error}`;
-      return;
-    }
-    const a = d.account;
-    $("brokerAcct").innerHTML =
-      `<b>Equity $${a.equity.toLocaleString(undefined, {maximumFractionDigits: 0})}</b>` +
-      ` &nbsp;|&nbsp; cash $${a.cash.toLocaleString(undefined, {maximumFractionDigits: 0})}` +
-      ` &nbsp;|&nbsp; buying power $${a.buying_power.toLocaleString(undefined, {maximumFractionDigits: 0})}` +
-      ` &nbsp;|&nbsp; sizing $${d.notional_per_trade.toLocaleString()} per signal`;
-    $("brokerPosBody").innerHTML = d.positions.length
+// The paper-trading panel is rendered into both the swing tab and the 0DTE
+// tab from one shared account state; only the explanatory copy differs.
+const BROKER_COPY = {
+  swing: {
+    off: "Not connected. Create a free paper account at <b>alpaca.markets</b>, copy the API keys from the dashboard (Paper mode), then copy <code>alpaca.example.json</code> to <code>alpaca.json</code> next to webapp.py and paste them in.",
+    on: "<b>Swing signals</b> are mirrored as GTC <b>bracket</b> buys: submitted after the close, they fill at the next open with the ATR stop (and target) resting server-side at Alpaca, so they trigger even while this app is off. The position is flattened when the exit alert fires.",
+  },
+  "0dte": {
+    off: "Not connected. Create a free paper account at <b>alpaca.markets</b>, copy the API keys from the dashboard (Paper mode), then copy <code>alpaca.example.json</code> to <code>alpaca.json</code> next to webapp.py and paste them in.",
+    on: "<b>All five 0DTE strategies alert and log to Alert history, but only the strategies listed below are actually traded</b> (VWAP Reversion by default &mdash; set <code>zerodte_strategies</code> in alpaca.json to change). 0DTE orders are plain <b>day market</b> orders, long or short, sized from <code>zerodte_notional</code>: no bracket, because the VWAP exit is a moving level rather than a fixed price. The monitor closes the position when VWAP is touched, and a 15:55 sweep flattens anything still open &mdash; nothing intraday carries overnight. <b>SPX is alert-only</b> (a cash index, not tradable as an equity); SPY, QQQ and IWM trade normally.",
+  },
+};
+
+function brokerPanelHtml(d, scope) {
+  const copy = BROKER_COPY[scope];
+  if (!d.enabled) return `<p class="note">${copy.off}</p>`;
+  if (d.error) return `<p class="note" style="color:#e5534b">Broker error: ${d.error}</p>`;
+
+  const a = d.account;
+  const cap = a.equity * d.max_exposure_pct / 100;
+  const money = (v) => "$" + v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  const traded = (d.paper_0dte || []).length
+    ? (d.paper_0dte || []).map((s) => `<b>${s}</b>`).join(", ")
+    : "<b>none</b>";
+
+  return (
+    `<p class="note">${copy.on}</p>` +
+    (scope === "0dte" ? `<p class="note">Traded to Alpaca right now: ${traded} &nbsp;|&nbsp; size ${money(d.zerodte_notional)} per 0DTE trade</p>` : "") +
+    `<p class="note"><b>Equity ${money(a.equity)}</b> &nbsp;|&nbsp; cash ${money(a.cash)}` +
+    ` &nbsp;|&nbsp; buying power ${money(a.buying_power)}` +
+    `<br><b>Guardrails:</b> ${money(d.notional_per_trade)} per swing signal` +
+    ` &nbsp;|&nbsp; positions <b>${d.slots_used}/${d.max_positions}</b>` +
+    ` &nbsp;|&nbsp; exposure <b>${money(d.exposure)}</b> of ${money(cap)} cap (${d.max_exposure_pct}% of equity)` +
+    `<br>Signals beyond these caps are skipped and logged, not queued.</p>` +
+    `<h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Open paper positions</h4>` +
+    `<table style="margin:0"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg entry</th><th>Current</th><th>Unrealized P/L</th></tr></thead><tbody>` +
+    (d.positions.length
       ? d.positions.map((p) =>
           `<tr><td>${p.symbol}</td><td>${p.qty}</td><td>${p.avg_entry.toFixed(2)}</td>` +
           `<td>${p.current.toFixed(2)}</td>` +
           `<td style="color:${p.unrealized_pl >= 0 ? "#38c793" : "#e5534b"}">` +
           `$${p.unrealized_pl.toFixed(2)} (${p.unrealized_plpc >= 0 ? "+" : ""}${p.unrealized_plpc.toFixed(2)}%)</td></tr>`).join("")
-      : `<tr><td colspan="5">No open paper positions.</td></tr>`;
-    $("brokerOrdBody").innerHTML = d.open_orders.length
+      : `<tr><td colspan="5">No open paper positions.</td></tr>`) +
+    `</tbody></table>` +
+    `<h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Pending paper orders</h4>` +
+    `<table style="margin:0 0 0.5rem"><thead><tr><th>Symbol</th><th>Side</th><th>Type</th><th>Qty</th><th>Status</th><th>Submitted</th></tr></thead><tbody>` +
+    (d.open_orders.length
       ? d.open_orders.map((o) =>
           `<tr><td>${o.symbol}</td><td>${o.side}</td><td>${o.type}</td>` +
           `<td>${o.qty || ""}</td><td>${o.status}</td><td class="note">${o.submitted_at}</td></tr>`).join("")
-      : `<tr><td colspan="6">No pending paper orders.</td></tr>`;
+      : `<tr><td colspan="6">No pending paper orders.</td></tr>`) +
+    `</tbody></table>` +
+    `<div class="actions"><button class="run secondary" onclick="loadBroker()">Refresh broker</button></div>`
+  );
+}
+
+async function loadBroker() {
+  const boxes = document.querySelectorAll("[data-scope]");
+  try {
+    const d = await (await fetch("/api/broker/status")).json();
+    boxes.forEach((box) => (box.innerHTML = brokerPanelHtml(d, box.dataset.scope)));
   } catch (e) {
-    st.textContent = `broker status failed: ${e}`;
+    boxes.forEach((box) => (box.innerHTML = `<p class="note" style="color:#e5534b">broker status failed: ${e}</p>`));
   }
 }
-$("brokerRefreshBtn").addEventListener("click", loadBroker);
 
 async function loadAlertHistory() {
   const syms = $("ahSyms").value.split(/[\s,]+/).filter(Boolean).map((s) => s.toUpperCase());
@@ -757,7 +777,7 @@ async function loadAlertHistory() {
     const tbody = $("ahBody");
     tbody.innerHTML = "";
     if (!data.alerts.length) {
-      tbody.innerHTML = `<tr><td colspan="14">No alerts for the selected dates/symbols.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="15">No alerts for the selected dates/symbols.</td></tr>`;
       return;
     }
     const fmt = (v) => (v === null || v === undefined ? "&mdash;" : v.toFixed(2));
@@ -776,6 +796,7 @@ async function loadAlertHistory() {
         `<td>${closed ? a.exit_time : (a.planned_exit || "&mdash;")}</td>` +
         `<td>${fmt(a.exit_price)}</td>` +
         `<td>${pnl}</td>` +
+        `<td>${a.broker_qty ? `<span title="Alpaca order ${a.broker_order_id}">${a.broker_qty} sh</span>` : "&mdash;"}</td>` +
         `<td style="color:${closed ? "#9aa3b5" : "#f0b429"}">${statusTxt}</td>`;
       tbody.appendChild(tr);
     }
@@ -899,7 +920,7 @@ $("bResearchBtn").addEventListener("click", async () => {
 
 $("bAlertBtn").addEventListener("click", async () => {
   const body = {
-    symbols: [], strategies: [],
+    configure: ["swing"],
     swing_universe: $("bUniverse").value,
     swing_strategies: ["bear"],
     swing_tickers: $("tickers").value.split(/[\s,]+/).filter(Boolean),
@@ -970,6 +991,137 @@ async function loadBearHistory() {
     }).join("");
   } catch (e) { /* server unreachable */ }
 }
+
+// ================= ANALYZER TAB =================
+const anCharts = {};   // canvasId -> Chart instance
+
+function verdictHtml(v, score) {
+  const colors = {
+    "Strong Buy": "#38c793", "Buy": "#7bc96f", "Neutral": "#9aa3b5",
+    "Sell": "#e08b4e", "Strong Sell": "#e5534b", "No session data": "#9aa3b5",
+  };
+  const s = score === undefined ? "" : ` (${score >= 0 ? "+" : ""}${score})`;
+  return `<b style="color:${colors[v] || "#9aa3b5"}">${v}</b>${s}`;
+}
+
+function rangeHtml(p) {
+  return `<b>${p.point.toFixed(2)}</b><br><span class="note">${p.low.toFixed(2)} &ndash; ${p.high.toFixed(2)}</span>`;
+}
+
+$("anBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/analyze", { tickers: $("anTickers").value },
+                             $("anStatus"), [$("anBtn"), $("anRevBtn")]);
+  if (!data) return;
+  Object.values(anCharts).forEach((c) => c.destroy());
+  for (const k in anCharts) delete anCharts[k];
+  $("anResults").style.display = "block";
+  $("anMeta").textContent = `(${data.results.length} tickers)`;
+  const tbody = $("anBody");
+  tbody.innerHTML = "";
+  for (const r of data.results) {
+    const tr = document.createElement("tr");
+    if (r.error) {
+      tr.innerHTML = `<td></td><td>${r.ticker}</td><td colspan="6" class="note">${r.error}</td>`;
+      tbody.appendChild(tr);
+      continue;
+    }
+    const rev = r.reversals.length
+      ? r.reversals.map((f) =>
+          `<span style="color:${f.direction === "bullish" ? "#38c793" : "#e5534b"}">&#9888; ${f.direction}</span>`).join(" ")
+      : `<span class="note">none</span>`;
+    tr.style.cursor = "pointer";
+    tr.title = "Click to expand reasoning and charts";
+    tr.innerHTML =
+      `<td>➕</td><td><b>${r.ticker}</b></td><td>${r.prediction.last.toFixed(2)}</td>` +
+      `<td>${verdictHtml(r.swing.verdict, r.swing.score)}</td>` +
+      `<td>${verdictHtml(r.day.verdict, r.day.score)}</td>` +
+      `<td>${rangeHtml(r.prediction.eod)}</td><td>${rangeHtml(r.prediction.eow)}</td>` +
+      `<td>${rev}</td>`;
+    tbody.appendChild(tr);
+
+    const detail = document.createElement("tr");
+    detail.style.display = "none";
+    const li = (arr) => arr.map((x) => `<li>${x}</li>`).join("");
+    const revList = r.reversals.length
+      ? `<h4 style="margin:0.75rem 0 0.25rem;color:#9aa3b5">Reversal evidence</h4><ul class="note" style="margin:0 0 0.5rem 1.25rem">` +
+        r.reversals.map((f) => `<li><b style="color:${f.direction === "bullish" ? "#38c793" : "#e5534b"}">${f.direction}</b>: ${f.what}</li>`).join("") + `</ul>`
+      : "";
+    detail.innerHTML =
+      `<td colspan="8">` +
+      `<div style="display:flex;gap:2rem;flex-wrap:wrap">` +
+      `<div style="flex:1;min-width:280px"><h4 style="margin:0.5rem 0 0.25rem;color:#9aa3b5">Swing view &mdash; ${r.swing.verdict} (${r.swing.score})</h4>` +
+      `<ul class="note" style="margin:0 0 0.5rem 1.25rem">${li(r.swing.reasons)}</ul></div>` +
+      `<div style="flex:1;min-width:280px"><h4 style="margin:0.5rem 0 0.25rem;color:#9aa3b5">Day view &mdash; ${r.day.verdict}${r.day.score !== undefined ? ` (${r.day.score})` : ""}</h4>` +
+      `<ul class="note" style="margin:0 0 0.5rem 1.25rem">${li(r.day.reasons)}</ul></div>` +
+      `</div>` + revList +
+      `<p class="note" style="margin:0.25rem 0">${r.prediction.basis} (EOD = ${r.prediction.eod.label}, week = ${r.prediction.eow.label}.)</p>` +
+      `<div class="charts"><div class="card"><canvas id="anD-${r.ticker}"></canvas></div>` +
+      `<div class="card"><canvas id="anI-${r.ticker}"></canvas></div></div></td>`;
+    tbody.appendChild(detail);
+
+    tr.addEventListener("click", async () => {
+      const open = detail.style.display !== "none";
+      detail.style.display = open ? "none" : "table-row";
+      tr.cells[0].textContent = open ? "➕" : "➖";
+      if (!open && !anCharts["anD-" + r.ticker]) await loadAnalyzerCharts(r.ticker);
+    });
+  }
+});
+
+async function loadAnalyzerCharts(ticker) {
+  try {
+    const d = await (await fetch("/api/analyze/chart?ticker=" + encodeURIComponent(ticker))).json();
+    if (d.error) return;
+    const ds = (label, data, color, dash) => ({
+      label, data, borderColor: color, borderWidth: dash ? 1 : 2,
+      borderDash: dash ? [4, 4] : [], pointRadius: 0, tension: 0.15, spanGaps: true,
+    });
+    anCharts["anD-" + ticker] = new Chart($("anD-" + ticker), {
+      type: "line",
+      data: { labels: d.daily.dates, datasets: [
+        ds("Close", d.daily.close, "#4f8ef7"),
+        ds("SMA20", d.daily.sma20, "#f0b429", true),
+        ds("SMA50", d.daily.sma50, "#e08b4e", true),
+        ds("SMA200", d.daily.sma200, "#e5534b", true),
+        ds("BB upper", d.daily.bb_upper, "#556072", true),
+        ds("BB lower", d.daily.bb_lower, "#556072", true),
+      ]},
+      options: { plugins: { title: { display: true, text: ticker + " — daily (130 bars)" } },
+                 scales: { x: { ticks: { maxTicksLimit: 8 } } } },
+    });
+    if (d.intraday) {
+      anCharts["anI-" + ticker] = new Chart($("anI-" + ticker), {
+        type: "line",
+        data: { labels: d.intraday.times, datasets: [
+          ds("Close", d.intraday.close, "#4f8ef7"),
+          ds("VWAP", d.intraday.vwap, "#f0b429", true),
+        ]},
+        options: { plugins: { title: { display: true, text: ticker + " — today (5-min) vs VWAP" } },
+                   scales: { x: { ticks: { maxTicksLimit: 8 } } } },
+      });
+    } else {
+      const c = $("anI-" + ticker);
+      if (c) c.parentElement.innerHTML = `<p class="note">No intraday bars (market closed).</p>`;
+      anCharts["anI-" + ticker] = { destroy() {} };
+    }
+  } catch (e) { /* chart fetch failed; leave empty */ }
+}
+
+// Reversal alerts own only the "reversal" channel of the shared monitor.
+$("anRevBtn").addEventListener("click", async () => {
+  const tickers = $("anTickers").value.split(/[\s,]+/).filter(Boolean);
+  if (!tickers.length) { $("anStatus").textContent = "Error: enter tickers first"; return; }
+  const body = { configure: ["reversal"], reversal_tickers: tickers };
+  const data = await callApi("/api/alerts/start", body, $("anStatus"), [$("anBtn"), $("anRevBtn")]);
+  if (data) $("anStatusLine").innerHTML =
+    `<span style="color:#38c793">&#9679;</span> Watching <b>${data.reversal_tickers.join(", ")}</b> for reversals ` +
+    `(every 15 min while the market is open; alerts land in Alert history under type "Reversals").`;
+});
+
+$("anRevStopBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/alerts/stop", {}, $("anStatus"), [$("anBtn"), $("anRevBtn")]);
+  if (data) $("anStatusLine").textContent = "Monitor stopped (all channels: 0DTE, swing, reversals).";
+});
 </script>
 </body>
 </html>

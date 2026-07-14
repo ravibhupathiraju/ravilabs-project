@@ -9,7 +9,7 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import alerts, backtest, bear, broker, screener, zerodte
+from swingtrader import alerts, analyzer, backtest, bear, broker, screener, zerodte
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
@@ -133,6 +133,11 @@ def api_zerodte():
 @app.post("/api/alerts/start")
 def api_alerts_start():
     payload = request.get_json(force=True)
+    # Each tab configures only its own channel: the 0DTE tab sends
+    # configure=["zerodte"], the swing/bear tabs send ["swing"]. Starting one
+    # therefore leaves the other's config (and alerts) running untouched.
+    configure = tuple(payload.get("configure") or ("zerodte", "swing"))
+    buffer_raw = payload.get("earnings_buffer")
     return jsonify(
         alerts.MONITOR.start(
             payload.get("symbols") or [],
@@ -140,7 +145,9 @@ def api_alerts_start():
             swing_universe=payload.get("swing_universe"),
             swing_strategies=payload.get("swing_strategies") or [],
             swing_tickers=payload.get("swing_tickers") or [],
-            earnings_buffer=int(payload.get("earnings_buffer", 3)),
+            earnings_buffer=int(buffer_raw) if buffer_raw not in (None, "") else None,
+            reversal_tickers=payload.get("reversal_tickers") or [],
+            configure=configure,
         )
     )
 
@@ -181,6 +188,26 @@ def api_alerts_performance():
 @app.get("/api/broker/status")
 def api_broker_status():
     return jsonify(broker.status())
+
+
+@app.post("/api/analyze")
+def api_analyze():
+    payload = request.get_json(force=True)
+    raw = payload.get("tickers", "")
+    tickers = [t.upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+    if not tickers:
+        return jsonify({"error": "enter at least one ticker"}), 400
+    if len(tickers) > 20:
+        return jsonify({"error": "20 tickers max per analysis"}), 400
+    return jsonify({"results": analyzer.analyze(tickers)})
+
+
+@app.get("/api/analyze/chart")
+def api_analyze_chart():
+    ticker = (request.args.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    return jsonify(analyzer.chart_data(ticker))
 
 
 @app.post("/api/bear/scan")
