@@ -378,26 +378,19 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   <p class="note"><b>Reading the projections:</b> the point value is a drift estimate and the range is a &plusmn;1&sigma; statistical cone from 20-day realized volatility &mdash; the close should land inside it roughly 2 times out of 3. It says how far price can plausibly travel, <b>not</b> which way it will go; direction conviction comes from the scores. Educational use only; not financial advice.</p>
 </div>
 
-<!-- Fullscreen chart overlay -->
+<!-- Fullscreen chart overlay: 1-3 panels of the same ticker, per-panel timeframe -->
 <div id="anFS" style="display:none;position:fixed;inset:0;z-index:1000;background:#0d1420;padding:0.75rem 1.25rem;overflow:auto">
   <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
     <input type="text" id="anFsTicker" placeholder="Ticker" style="width:8rem;text-transform:uppercase">
     <button class="run" id="anFsLoad">Load</button>
-    <span style="margin-left:0.5rem">
-      <button class="run secondary anFsTf" data-tf="5m" style="padding:0.25rem 0.9rem">5M</button>
-      <button class="run secondary anFsTf" data-tf="15m" style="padding:0.25rem 0.9rem">15M</button>
-      <button class="run secondary anFsTf" data-tf="4h" style="padding:0.25rem 0.9rem">4H</button>
-      <button class="run secondary anFsTf" data-tf="1d" style="padding:0.25rem 0.9rem">1D</button>
-    </span>
-    <button class="run secondary" id="anFsPat" style="padding:0.25rem 0.9rem">Pattern analyzer</button>
-    <span class="note" id="anSrc-FS"></span>
+    <span class="note" style="margin-left:0.75rem">Layout:</span>
+    <button class="run secondary anFsLayout" data-n="1" style="padding:0.25rem 0.9rem">1 chart</button>
+    <button class="run secondary anFsLayout" data-n="2" style="padding:0.25rem 0.9rem">2 charts</button>
+    <button class="run secondary anFsLayout" data-n="3" style="padding:0.25rem 0.9rem">3 charts</button>
+    <span class="note">drag the bars between/below panes to resize</span>
     <button class="run secondary" id="anFsClose" style="margin-left:auto;padding:0.25rem 0.9rem">&#10005; Close (Esc)</button>
   </div>
-  <div class="card" style="padding:0.5rem">
-    <div id="anC-FS" style="height:60vh"></div>
-    <div id="anR-FS" style="height:20vh;border-top:1px solid #1f2733"></div>
-    <p class="note" id="anN-FS" style="margin:0.4rem 0 0"></p>
-  </div>
+  <div id="anFsPanels" style="display:flex;gap:0.75rem;align-items:flex-start"></div>
 </div>
 </div>
 
@@ -1303,44 +1296,128 @@ async function loadRsiPattern(key) {
   note.textContent = (c.baseNote ? c.baseNote + "  |  " : "") + `RSI pattern (${d.bars_used} bars): ${d.text}`;
 }
 
-// ---- fullscreen chart overlay ----
-function setFsTf(tf) {
-  document.querySelectorAll(".anFsTf").forEach((b) =>
-    (b.style.outline = b.dataset.tf === tf ? "2px solid #4f8ef7" : ""));
+// ---- fullscreen chart overlay: 1-3 timeframe panels of one ticker ----
+let fsLayout = 1;
+const FS_TF_DEFAULTS = { 1: ["1d"], 2: ["15m", "1d"], 3: ["5m", "15m", "1d"] };
+let fsTfs = ["1d"];
+
+function fsTicker() {
+  return ($("anFsTicker").value || "").trim().toUpperCase().split(/[\s,]+/)[0] || "";
 }
-function fsTf() {
-  const b = [...document.querySelectorAll(".anFsTf")].find((x) => x.style.outline);
-  return b ? b.dataset.tf : "1d";
+
+function destroyFsCharts() {
+  for (const k of Object.keys(anCharts)) {
+    if (!k.startsWith("FS")) continue;
+    try { anCharts[k].main.remove(); anCharts[k].rsi.remove(); } catch (e) {}
+    delete anCharts[k];
+  }
 }
+
+// simple vertical drag helper: calls onDy(deltaY) while the handle is dragged
+function attachDrag(el, onDy) {
+  el.addEventListener("mousedown", (e) => {
+    e.preventDefault();
+    let y = e.clientY;
+    const move = (ev) => { onDy(ev.clientY - y); y = ev.clientY; };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    };
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+
+function buildFsPanels() {
+  destroyFsCharts();
+  const wrap = $("anFsPanels");
+  wrap.innerHTML = "";
+  fsTfs = FS_TF_DEFAULTS[fsLayout].slice();
+  const priceH = fsLayout === 1 ? 56 : 46;   // vh
+  const rsiH = fsLayout === 1 ? 18 : 14;
+  const handle = 'style="height:7px;cursor:row-resize;background:#232e40;border-radius:3px;margin:3px 0" title="Drag to resize"';
+  for (let i = 0; i < fsLayout; i++) {
+    const key = "FS" + i;
+    const panel = document.createElement("div");
+    panel.className = "card";
+    panel.style.cssText = "flex:1;min-width:0;padding:0.5rem";
+    panel.innerHTML =
+      `<div style="margin-bottom:0.4rem">` +
+      ["5m", "15m", "4h", "1d"].map((tf) =>
+        `<button class="run secondary fsPTf" data-i="${i}" data-tf="${tf}"` +
+        ` style="padding:0.15rem 0.6rem${tf === fsTfs[i] ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
+      ` <button class="run secondary fsPPat" data-i="${i}" style="padding:0.15rem 0.6rem">Patterns</button>` +
+      ` <span class="note" id="anSrc-${key}"></span></div>` +
+      `<div id="anC-${key}" style="height:${priceH}vh"></div>` +
+      `<div class="fsSplit" data-i="${i}" ${handle}></div>` +
+      `<div id="anR-${key}" style="height:${rsiH}vh"></div>` +
+      `<div class="fsGrow" data-i="${i}" ${handle}></div>` +
+      `<p class="note" id="anN-${key}" style="margin:0.3rem 0 0"></p>`;
+    wrap.appendChild(panel);
+  }
+  wrap.querySelectorAll(".fsPTf").forEach((b) =>
+    b.addEventListener("click", () => {
+      const i = +b.dataset.i;
+      fsTfs[i] = b.dataset.tf;
+      wrap.querySelectorAll(`.fsPTf[data-i="${i}"]`).forEach(
+        (x) => (x.style.outline = x.dataset.tf === fsTfs[i] ? "2px solid #4f8ef7" : ""));
+      if (fsTicker()) loadTvChart(fsTicker(), fsTfs[i], "FS" + i);
+    }));
+  wrap.querySelectorAll(".fsPPat").forEach((b) =>
+    b.addEventListener("click", () => loadRsiPattern("FS" + b.dataset.i)));
+  // middle handle: trade height between the price pane and the RSI pane
+  wrap.querySelectorAll(".fsSplit").forEach((h) =>
+    attachDrag(h, (dy) => {
+      const p = $("anC-FS" + h.dataset.i), r = $("anR-FS" + h.dataset.i);
+      const ph = p.getBoundingClientRect().height + dy;
+      const rh = r.getBoundingClientRect().height - dy;
+      if (ph >= 140 && rh >= 60) { p.style.height = ph + "px"; r.style.height = rh + "px"; }
+    }));
+  // bottom handle: grow/shrink the RSI pane (whole panel gets taller/shorter)
+  wrap.querySelectorAll(".fsGrow").forEach((h) =>
+    attachDrag(h, (dy) => {
+      const r = $("anR-FS" + h.dataset.i);
+      const rh = r.getBoundingClientRect().height + dy;
+      if (rh >= 60 && rh <= window.innerHeight * 0.6) r.style.height = rh + "px";
+    }));
+}
+
+async function fsLoadAll() {
+  const t = fsTicker();
+  if (!t) return;
+  for (let i = 0; i < fsLayout; i++) await loadTvChart(t, fsTfs[i], "FS" + i);
+}
+
+function setFsLayoutButtons() {
+  document.querySelectorAll(".anFsLayout").forEach(
+    (b) => (b.style.outline = +b.dataset.n === fsLayout ? "2px solid #4f8ef7" : ""));
+}
+
 async function openFullscreen(ticker) {
   $("anFS").style.display = "block";
   $("anFsTicker").value = ticker;
-  const tf = (anCharts[ticker] && anCharts[ticker].tf) || "1d";
-  setFsTf(tf);
-  await loadTvChart(ticker, tf, "FS");
+  setFsLayoutButtons();
+  buildFsPanels();
+  await fsLoadAll();
 }
+
 function closeFullscreen() {
   if ($("anFS").style.display === "none") return;
   $("anFS").style.display = "none";
-  if (anCharts.FS) {
-    try { anCharts.FS.main.remove(); anCharts.FS.rsi.remove(); } catch (e) {}
-    delete anCharts.FS;
-  }
+  destroyFsCharts();
 }
+
 $("anFsClose").addEventListener("click", closeFullscreen);
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFullscreen(); });
-$("anFsLoad").addEventListener("click", () => {
-  const t = ($("anFsTicker").value || "").trim().toUpperCase().split(/[\s,]+/)[0];
-  if (t) loadTvChart(t, fsTf(), "FS");
-});
-$("anFsTicker").addEventListener("keydown", (e) => { if (e.key === "Enter") $("anFsLoad").click(); });
-document.querySelectorAll(".anFsTf").forEach((b) =>
-  b.addEventListener("click", () => {
-    setFsTf(b.dataset.tf);
-    const t = ($("anFsTicker").value || "").trim().toUpperCase().split(/[\s,]+/)[0];
-    if (t) loadTvChart(t, b.dataset.tf, "FS");
+$("anFsLoad").addEventListener("click", fsLoadAll);
+$("anFsTicker").addEventListener("keydown", (e) => { if (e.key === "Enter") fsLoadAll(); });
+document.querySelectorAll(".anFsLayout").forEach((b) =>
+  b.addEventListener("click", async () => {
+    fsLayout = +b.dataset.n;
+    setFsLayoutButtons();
+    buildFsPanels();
+    await fsLoadAll();
   }));
-$("anFsPat").addEventListener("click", () => loadRsiPattern("FS"));
 
 // Reversal alerts own only the "reversal" channel of the shared monitor.
 $("anRevBtn").addEventListener("click", async () => {
