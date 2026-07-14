@@ -364,7 +364,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
     <p class="note" id="anStatusLine"></p>
     <details>
       <summary class="note" style="cursor:pointer">How to read this tab &mdash; scores, charts, reversal alerts</summary>
-      <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, session <b>VWAP</b> on the intraday timeframes, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Pattern analyzer</b> (in the chart toolbar) studies where RSI has been bouncing and stalling recently and marks those typical support/resistance RSI zones on the RSI pane. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+      <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, session <b>VWAP</b> on the intraday timeframes, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. Typical <b>RSI support/resistance zones</b> (where RSI has recently bounced and stalled, from its own pivot history) are drawn automatically on the RSI pane of every chart. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
     </details>
   </div>
 </div>
@@ -1081,9 +1081,7 @@ $("anBtn").addEventListener("click", async () => {
         `<button class="run secondary anTf" data-ticker="${r.ticker}" data-tf="${tf}"` +
         ` style="padding:0.25rem 0.9rem${tf === "1d" ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
       ` <span class="note" id="anSrc-${r.ticker}"></span>` +
-      ` <button class="run secondary anFull" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right;margin-left:0.4rem" title="Open a large chart with its own ticker box">⛶ Full screen</button>` +
-      ` <button class="run secondary anPat" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right"` +
-      ` title="Where has RSI been bouncing and stalling? Marks typical RSI support/resistance zones on the RSI pane">Pattern analyzer</button></div>` +
+      ` <button class="run secondary anFull" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right;margin-left:0.4rem" title="Open a large chart with its own ticker box">⛶ Full screen</button></div>` +
       `<div class="card" style="padding:0.5rem">` +
       `<div id="anC-${r.ticker}" style="height:360px"></div>` +
       `<div id="anR-${r.ticker}" style="height:150px;border-top:1px solid #1f2733"></div>` +
@@ -1097,10 +1095,6 @@ $("anBtn").addEventListener("click", async () => {
         btn.style.outline = "2px solid #4f8ef7";
         loadTvChart(r.ticker, btn.dataset.tf);
       }));
-    detail.querySelector(".anPat").addEventListener("click", (e) => {
-      e.stopPropagation();
-      loadRsiPattern(r.ticker);
-    });
     detail.querySelector(".anFull").addEventListener("click", (e) => {
       e.stopPropagation();
       openFullscreen(r.ticker);
@@ -1251,6 +1245,7 @@ async function loadTvChart(ticker, tf, key) {
   $("anSrc-" + key).textContent = `data: ${d.source}`;
   note.textContent = notes.length ? notes.join("  |  ") : "";
   anCharts[key].baseNote = note.textContent;
+  loadRsiPattern(key);   // RSI support/resistance zones are always on
 }
 
 async function loadRsiPattern(key) {
@@ -1333,8 +1328,12 @@ function buildFsPanels() {
   const wrap = $("anFsPanels");
   wrap.innerHTML = "";
   fsTfs = FS_TF_DEFAULTS[fsLayout].slice();
-  const priceH = fsLayout === 1 ? 56 : 46;   // vh
-  const rsiH = fsLayout === 1 ? 18 : 14;
+  // Fill the viewport: whatever height remains after the toolbar and the
+  // per-panel chrome (tf row, drag handles, note line) goes to the charts,
+  // 3/4 to price and 1/4 to RSI. Drag handles adjust from there.
+  const avail = Math.max(window.innerHeight - 230, 420);
+  const priceH = Math.round(avail * 0.75);
+  const rsiH = Math.round(avail * 0.25);
   const handle = 'style="height:7px;cursor:row-resize;background:#232e40;border-radius:3px;margin:3px 0" title="Drag to resize"';
   for (let i = 0; i < fsLayout; i++) {
     const key = "FS" + i;
@@ -1346,11 +1345,10 @@ function buildFsPanels() {
       ["5m", "15m", "4h", "1d"].map((tf) =>
         `<button class="run secondary fsPTf" data-i="${i}" data-tf="${tf}"` +
         ` style="padding:0.15rem 0.6rem${tf === fsTfs[i] ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
-      ` <button class="run secondary fsPPat" data-i="${i}" style="padding:0.15rem 0.6rem">Patterns</button>` +
       ` <span class="note" id="anSrc-${key}"></span></div>` +
-      `<div id="anC-${key}" style="height:${priceH}vh"></div>` +
+      `<div id="anC-${key}" style="height:${priceH}px"></div>` +
       `<div class="fsSplit" data-i="${i}" ${handle}></div>` +
-      `<div id="anR-${key}" style="height:${rsiH}vh"></div>` +
+      `<div id="anR-${key}" style="height:${rsiH}px"></div>` +
       `<div class="fsGrow" data-i="${i}" ${handle}></div>` +
       `<p class="note" id="anN-${key}" style="margin:0.3rem 0 0"></p>`;
     wrap.appendChild(panel);
@@ -1363,8 +1361,6 @@ function buildFsPanels() {
         (x) => (x.style.outline = x.dataset.tf === fsTfs[i] ? "2px solid #4f8ef7" : ""));
       if (fsTicker()) loadTvChart(fsTicker(), fsTfs[i], "FS" + i);
     }));
-  wrap.querySelectorAll(".fsPPat").forEach((b) =>
-    b.addEventListener("click", () => loadRsiPattern("FS" + b.dataset.i)));
   // middle handle: trade height between the price pane and the RSI pane
   wrap.querySelectorAll(".fsSplit").forEach((h) =>
     attachDrag(h, (dy) => {
