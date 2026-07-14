@@ -643,6 +643,71 @@ def chart_data(ticker: str, tf: str = "1d") -> dict:
     }
 
 
+def rsi_pattern(ticker: str, tf: str = "1d") -> dict:
+    """Where has RSI(14) been finding support and resistance recently?
+
+    Takes the pivot lows and pivot highs of the RSI series itself over the
+    recent window (last ~90 bars on 1D, everything loaded on intraday
+    timeframes) and summarizes each side as a zone: the median pivot level
+    plus the 25th-75th percentile band, with every touch listed so the UI
+    can mark them. This answers "at what RSI does this name typically
+    bounce / stall" -- e.g. strong stocks bounce at RSI 40-50 rather than
+    30, weak ones stall at 55-60 rather than 70.
+    """
+    if tf not in TIMEFRAMES:
+        return {"error": f"timeframe must be one of {TIMEFRAMES}"}
+    df = _bars_for(ticker, tf)
+    if df.empty or len(df) < 40:
+        return {"error": f"not enough {tf} bars for {ticker}"}
+    if tf == "1d":
+        df = df.iloc[-90:]
+    rsi = _rsi_series(df["Close"], 14)
+    times = _times(df.index, tf)
+    vals = rsi.to_numpy(dtype=float)
+
+    def zone(idxs: list[int]) -> dict | None:
+        idxs = [i for i in idxs if not np.isnan(vals[i])]
+        if len(idxs) < 3:
+            return None
+        v = np.array([vals[i] for i in idxs])
+        return {
+            "mid": round(float(np.median(v)), 1),
+            "lo": round(float(np.percentile(v, 25)), 1),
+            "hi": round(float(np.percentile(v, 75)), 1),
+            "count": len(idxs),
+            "touches": [{"time": times[i], "value": round(float(vals[i]), 1)} for i in idxs],
+        }
+
+    support = zone(_pivot_indices(vals, 3, "low"))
+    resistance = zone(_pivot_indices(vals, 3, "high"))
+    current = next((float(v) for v in vals[::-1] if not np.isnan(v)), None)
+
+    parts = []
+    if support:
+        parts.append(f"RSI support zone {support['lo']}-{support['hi']} "
+                     f"(median bounce {support['mid']}, {support['count']} troughs)")
+    if resistance:
+        parts.append(f"resistance zone {resistance['lo']}-{resistance['hi']} "
+                     f"(median stall {resistance['mid']}, {resistance['count']} peaks)")
+    if current is not None and support and resistance:
+        if current <= support["hi"]:
+            pos = "inside the support zone — the level where bounces have started"
+        elif current >= resistance["lo"]:
+            pos = "inside the resistance zone — the level where rallies have stalled"
+        else:
+            pos = "mid-range between the zones"
+        parts.append(f"current RSI {current:.0f}: {pos}")
+    if not parts:
+        parts.append("not enough RSI pivots in this window to map zones")
+    return {
+        "ticker": ticker, "tf": tf,
+        "bars_used": len(df),
+        "support": support, "resistance": resistance,
+        "current_rsi": round(current, 1) if current is not None else None,
+        "text": "; ".join(parts),
+    }
+
+
 def scan_reversals(tickers: list[str]) -> list[dict]:
     """Fresh reversal events for the alert monitor."""
     events = []

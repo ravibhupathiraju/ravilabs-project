@@ -211,6 +211,15 @@ def api_analyze_chart():
     return jsonify(analyzer.chart_data(ticker, tf=tf))
 
 
+@app.get("/api/analyze/rsi-pattern")
+def api_analyze_rsi_pattern():
+    ticker = (request.args.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    tf = (request.args.get("tf") or "1d").lower()
+    return jsonify(analyzer.rsi_pattern(ticker, tf=tf))
+
+
 @app.post("/api/bear/scan")
 def api_bear_scan():
     payload = request.get_json(force=True)

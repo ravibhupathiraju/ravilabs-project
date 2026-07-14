@@ -362,7 +362,10 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
   <div class="field wide">
     <p class="note" id="anStatusLine"></p>
-    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, session <b>VWAP</b> on the intraday timeframes, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+    <details>
+      <summary class="note" style="cursor:pointer">How to read this tab &mdash; scores, charts, reversal alerts</summary>
+      <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, session <b>VWAP</b> on the intraday timeframes, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Pattern analyzer</b> (in the chart toolbar) studies where RSI has been bouncing and stalling recently and marks those typical support/resistance RSI zones on the RSI pane. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+    </details>
   </div>
 </div>
 
@@ -1060,7 +1063,9 @@ $("anBtn").addEventListener("click", async () => {
       ["5m", "15m", "4h", "1d"].map((tf) =>
         `<button class="run secondary anTf" data-ticker="${r.ticker}" data-tf="${tf}"` +
         ` style="padding:0.25rem 0.9rem${tf === "1d" ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
-      ` <span class="note" id="anSrc-${r.ticker}"></span></div>` +
+      ` <span class="note" id="anSrc-${r.ticker}"></span>` +
+      ` <button class="run secondary anPat" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right"` +
+      ` title="Where has RSI been bouncing and stalling? Marks typical RSI support/resistance zones on the RSI pane">Pattern analyzer</button></div>` +
       `<div class="card" style="padding:0.5rem">` +
       `<div id="anC-${r.ticker}" style="height:360px"></div>` +
       `<div id="anR-${r.ticker}" style="height:150px;border-top:1px solid #1f2733"></div>` +
@@ -1074,6 +1079,10 @@ $("anBtn").addEventListener("click", async () => {
         btn.style.outline = "2px solid #4f8ef7";
         loadTvChart(r.ticker, btn.dataset.tf);
       }));
+    detail.querySelector(".anPat").addEventListener("click", (e) => {
+      e.stopPropagation();
+      loadRsiPattern(r.ticker);
+    });
 
     tr.addEventListener("click", async () => {
       const open = detail.style.display !== "none";
@@ -1126,7 +1135,7 @@ async function loadTvChart(ticker, tf) {
     ...TV_THEME, height: 150,
     timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
   });
-  anCharts[ticker] = { main, rsi: rsiChart };
+  anCharts[ticker] = { main, rsi: rsiChart, tf, patternLoaded: false };
 
   // -- price pane: candles + TRAMA(34) + levels + trendlines + divergence
   const candles = main.addCandlestickSeries({
@@ -1166,6 +1175,7 @@ async function loadTvChart(ticker, tf) {
     color: "#4f8ef7", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: "RSI 14",
   });
   rsiSeries.setData(d.rsi);
+  anCharts[ticker].rsiSeries = rsiSeries;
   for (const [key, color] of [["rsi_bb_up", "#556072"], ["rsi_bb_mid", "#3a4557"], ["rsi_bb_lo", "#556072"]]) {
     rsiChart.addLineSeries({
       color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
@@ -1205,6 +1215,50 @@ async function loadTvChart(ticker, tf) {
 
   $("anSrc-" + ticker).textContent = `data: ${d.source}`;
   note.textContent = notes.length ? notes.join("  |  ") : "";
+  anCharts[ticker].baseNote = note.textContent;
+}
+
+async function loadRsiPattern(ticker) {
+  const c = anCharts[ticker];
+  const note = $("anN-" + ticker);
+  if (!c || !c.rsiSeries) { note.textContent = "Open a chart first."; return; }
+  if (c.patternLoaded) return;   // zones already drawn for this timeframe
+  note.textContent = "Analyzing RSI patterns...";
+  let d;
+  try {
+    d = await (await fetch(`/api/analyze/rsi-pattern?ticker=${encodeURIComponent(ticker)}&tf=${c.tf}`)).json();
+  } catch (e) { note.textContent = "Pattern fetch failed: " + e; return; }
+  if (d.error) { note.textContent = d.error; return; }
+
+  const zones = [
+    [d.support, "#38c793", "RSI sup"],
+    [d.resistance, "#e5534b", "RSI res"],
+  ];
+  const markers = [];
+  for (const [z, color, label] of zones) {
+    if (!z) continue;
+    c.rsiSeries.createPriceLine({
+      price: z.mid, color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Solid,
+      axisLabelVisible: true, title: `${label} ${z.mid}`,
+    });
+    for (const edge of [z.lo, z.hi]) {
+      c.rsiSeries.createPriceLine({
+        price: edge, color, lineWidth: 1,
+        lineStyle: LightweightCharts.LineStyle.SparseDotted, axisLabelVisible: false,
+      });
+    }
+    const sup = label === "RSI sup";
+    for (const t of z.touches) {
+      markers.push({
+        time: t.time, position: sup ? "belowBar" : "aboveBar",
+        color, shape: "circle", size: 0.6,
+      });
+    }
+  }
+  markers.sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+  if (markers.length) c.rsiSeries.setMarkers(markers);
+  c.patternLoaded = true;
+  note.textContent = (c.baseNote ? c.baseNote + "  |  " : "") + `RSI pattern (${d.bars_used} bars): ${d.text}`;
 }
 
 // Reversal alerts own only the "reversal" channel of the shared monitor.
