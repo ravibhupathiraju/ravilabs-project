@@ -362,7 +362,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
   <div class="field wide">
     <p class="note" id="anStatusLine"></p>
-    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, session <b>VWAP</b> on the intraday timeframes, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
   </div>
 </div>
 
@@ -1138,6 +1138,13 @@ async function loadTvChart(ticker, tf) {
     color: "#f0b429", lineWidth: 2, priceLineVisible: false,
     lastValueVisible: false, crosshairMarkerVisible: false, title: "TRAMA 34",
   }).setData(d.trama);
+  if (d.vwap && d.vwap.length) {
+    main.addLineSeries({
+      color: "#4dd0e1", lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false, lastValueVisible: true, crosshairMarkerVisible: false,
+      title: "VWAP",
+    }).setData(d.vwap);
+  }
   for (const lv of d.levels) {
     const st = LEVEL_STYLE[lv.key] || { color: "#556072", style: 2 };
     candles.createPriceLine({

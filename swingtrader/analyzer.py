@@ -607,12 +607,32 @@ def chart_data(ticker: str, tf: str = "1d") -> dict:
         return [{"time": t, "value": round(float(v), 2)}
                 for t, v in zip(times, series) if pd.notna(v)]
 
+    # Session VWAP for intraday timeframes: resets every day. The first bar
+    # of each session is emitted as whitespace ({time} without a value) so
+    # the chart breaks the line between sessions instead of drawing a
+    # connector across the overnight gap.
+    vwap_pts: list[dict] = []
+    if tf in ("5m", "15m"):
+        tp = (df["High"] + df["Low"] + df["Close"]) / 3.0
+        day = pd.Series(df.index.date, index=df.index)
+        cum_pv = (tp * df["Volume"]).groupby(day.values).cumsum()
+        cum_v = df["Volume"].groupby(day.values).cumsum().replace(0, np.nan)
+        vwap = cum_pv / cum_v
+        prev_day = None
+        for t, ts, v in zip(times, df.index, vwap):
+            if ts.date() != prev_day:
+                vwap_pts.append({"time": t})   # whitespace: break between sessions
+                prev_day = ts.date()
+            elif pd.notna(v):
+                vwap_pts.append({"time": t, "value": round(float(v), 2)})
+
     return {
         "ticker": ticker,
         "tf": tf,
         "source": df.attrs.get("source", "yfinance"),
         "candles": candles,
         "trama": line(trama),
+        "vwap": vwap_pts,
         "rsi": line(rsi),
         "rsi_bb_mid": line(mid),
         "rsi_bb_up": line(mid + 2 * sd),
