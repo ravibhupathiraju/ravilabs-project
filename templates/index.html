@@ -377,6 +377,28 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </table>
   <p class="note"><b>Reading the projections:</b> the point value is a drift estimate and the range is a &plusmn;1&sigma; statistical cone from 20-day realized volatility &mdash; the close should land inside it roughly 2 times out of 3. It says how far price can plausibly travel, <b>not</b> which way it will go; direction conviction comes from the scores. Educational use only; not financial advice.</p>
 </div>
+
+<!-- Fullscreen chart overlay -->
+<div id="anFS" style="display:none;position:fixed;inset:0;z-index:1000;background:#0d1420;padding:0.75rem 1.25rem;overflow:auto">
+  <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;margin-bottom:0.6rem">
+    <input type="text" id="anFsTicker" placeholder="Ticker" style="width:8rem;text-transform:uppercase">
+    <button class="run" id="anFsLoad">Load</button>
+    <span style="margin-left:0.5rem">
+      <button class="run secondary anFsTf" data-tf="5m" style="padding:0.25rem 0.9rem">5M</button>
+      <button class="run secondary anFsTf" data-tf="15m" style="padding:0.25rem 0.9rem">15M</button>
+      <button class="run secondary anFsTf" data-tf="4h" style="padding:0.25rem 0.9rem">4H</button>
+      <button class="run secondary anFsTf" data-tf="1d" style="padding:0.25rem 0.9rem">1D</button>
+    </span>
+    <button class="run secondary" id="anFsPat" style="padding:0.25rem 0.9rem">Pattern analyzer</button>
+    <span class="note" id="anSrc-FS"></span>
+    <button class="run secondary" id="anFsClose" style="margin-left:auto;padding:0.25rem 0.9rem">&#10005; Close (Esc)</button>
+  </div>
+  <div class="card" style="padding:0.5rem">
+    <div id="anC-FS" style="height:60vh"></div>
+    <div id="anR-FS" style="height:20vh;border-top:1px solid #1f2733"></div>
+    <p class="note" id="anN-FS" style="margin:0.4rem 0 0"></p>
+  </div>
+</div>
 </div>
 
 <script>
@@ -1016,7 +1038,9 @@ $("anBtn").addEventListener("click", async () => {
   const data = await callApi("/api/analyze", { tickers: $("anTickers").value },
                              $("anStatus"), [$("anBtn"), $("anRevBtn")]);
   if (!data) return;
-  Object.values(anCharts).forEach((c) => { c.main.remove(); c.rsi.remove(); });
+  Object.values(anCharts).forEach((c) => {
+    try { c.main.remove(); c.rsi.remove(); } catch (e) {}
+  });
   for (const k in anCharts) delete anCharts[k];
   $("anResults").style.display = "block";
   $("anMeta").textContent = `(${data.results.length} tickers)`;
@@ -1064,6 +1088,7 @@ $("anBtn").addEventListener("click", async () => {
         `<button class="run secondary anTf" data-ticker="${r.ticker}" data-tf="${tf}"` +
         ` style="padding:0.25rem 0.9rem${tf === "1d" ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
       ` <span class="note" id="anSrc-${r.ticker}"></span>` +
+      ` <button class="run secondary anFull" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right;margin-left:0.4rem" title="Open a large chart with its own ticker box">⛶ Full screen</button>` +
       ` <button class="run secondary anPat" data-ticker="${r.ticker}" style="padding:0.25rem 0.9rem;float:right"` +
       ` title="Where has RSI been bouncing and stalling? Marks typical RSI support/resistance zones on the RSI pane">Pattern analyzer</button></div>` +
       `<div class="card" style="padding:0.5rem">` +
@@ -1082,6 +1107,10 @@ $("anBtn").addEventListener("click", async () => {
     detail.querySelector(".anPat").addEventListener("click", (e) => {
       e.stopPropagation();
       loadRsiPattern(r.ticker);
+    });
+    detail.querySelector(".anFull").addEventListener("click", (e) => {
+      e.stopPropagation();
+      openFullscreen(r.ticker);
     });
 
     tr.addEventListener("click", async () => {
@@ -1108,8 +1137,17 @@ const LEVEL_STYLE = {
   wk_lo: { color: "#b58cf0", style: LightweightCharts.LineStyle.Dotted },
 };
 
-async function loadTvChart(ticker, tf) {
-  const note = $("anN-" + ticker);
+// Pin the RSI pane to 0-100: without this the pattern markers and band
+// lines inflate the autoscale (the 0-150 squashed-pane bug).
+const RSI_SCALE = {
+  autoscaleInfoProvider: () => ({ priceRange: { minValue: 0, maxValue: 100 } }),
+};
+
+// key: which container set to render into — the inline row uses the ticker
+// itself, the fullscreen overlay uses "FS".
+async function loadTvChart(ticker, tf, key) {
+  key = key || ticker;
+  const note = $("anN-" + key);
   note.textContent = "Loading " + tf.toUpperCase() + " chart...";
   let d;
   try {
@@ -1120,22 +1158,21 @@ async function loadTvChart(ticker, tf) {
   }
   if (d.error) { note.textContent = d.error; return; }
 
-  if (anCharts[ticker]) {
-    anCharts[ticker].main.remove();
-    anCharts[ticker].rsi.remove();
+  if (anCharts[key]) {
+    try { anCharts[key].main.remove(); anCharts[key].rsi.remove(); } catch (e) {}
   }
-  const elMain = $("anC-" + ticker), elRsi = $("anR-" + ticker);
+  const elMain = $("anC-" + key), elRsi = $("anR-" + key);
   elMain.innerHTML = ""; elRsi.innerHTML = "";
   const intraday = tf !== "1d";
   const main = LightweightCharts.createChart(elMain, {
-    ...TV_THEME, height: 360,
+    ...TV_THEME, autoSize: true,
     timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
   });
   const rsiChart = LightweightCharts.createChart(elRsi, {
-    ...TV_THEME, height: 150,
+    ...TV_THEME, autoSize: true,
     timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
   });
-  anCharts[ticker] = { main, rsi: rsiChart, tf, patternLoaded: false };
+  anCharts[key] = { main, rsi: rsiChart, tf, ticker, patternLoaded: false };
 
   // -- price pane: candles + TRAMA(34) + levels + trendlines + divergence
   const candles = main.addCandlestickSeries({
@@ -1172,15 +1209,17 @@ async function loadTvChart(ticker, tf) {
 
   // -- RSI pane: RSI(14) + Bollinger(20,2) on RSI + 30/70 bands
   const rsiSeries = rsiChart.addLineSeries({
-    color: "#4f8ef7", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: "RSI 14",
+    color: "#4f8ef7", lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    title: "RSI 14", ...RSI_SCALE,
   });
   rsiSeries.setData(d.rsi);
-  anCharts[ticker].rsiSeries = rsiSeries;
-  for (const [key, color] of [["rsi_bb_up", "#556072"], ["rsi_bb_mid", "#3a4557"], ["rsi_bb_lo", "#556072"]]) {
+  anCharts[key].rsiSeries = rsiSeries;
+  for (const [k, color] of [["rsi_bb_up", "#556072"], ["rsi_bb_mid", "#3a4557"], ["rsi_bb_lo", "#556072"]]) {
     rsiChart.addLineSeries({
       color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
       priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
-    }).setData(d[key]);
+      ...RSI_SCALE,
+    }).setData(d[k]);
   }
   for (const lvl of [30, 70]) {
     rsiSeries.createPriceLine({
@@ -1196,7 +1235,7 @@ async function loadTvChart(ticker, tf) {
     const seg = { color, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
                   priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
     main.addLineSeries(seg).setData(d.divergence.price);
-    rsiChart.addLineSeries(seg).setData(d.divergence.rsi);
+    rsiChart.addLineSeries({ ...seg, ...RSI_SCALE }).setData(d.divergence.rsi);
     candles.setMarkers([{
       time: d.divergence.marker_time, position: bull ? "belowBar" : "aboveBar",
       color, shape: bull ? "arrowUp" : "arrowDown", text: bull ? "Bull div" : "Bear div",
@@ -1213,20 +1252,20 @@ async function loadTvChart(ticker, tf) {
   });
   main.timeScale().fitContent();
 
-  $("anSrc-" + ticker).textContent = `data: ${d.source}`;
+  $("anSrc-" + key).textContent = `data: ${d.source}`;
   note.textContent = notes.length ? notes.join("  |  ") : "";
-  anCharts[ticker].baseNote = note.textContent;
+  anCharts[key].baseNote = note.textContent;
 }
 
-async function loadRsiPattern(ticker) {
-  const c = anCharts[ticker];
-  const note = $("anN-" + ticker);
+async function loadRsiPattern(key) {
+  const c = anCharts[key];
+  const note = $("anN-" + key);
   if (!c || !c.rsiSeries) { note.textContent = "Open a chart first."; return; }
   if (c.patternLoaded) return;   // zones already drawn for this timeframe
   note.textContent = "Analyzing RSI patterns...";
   let d;
   try {
-    d = await (await fetch(`/api/analyze/rsi-pattern?ticker=${encodeURIComponent(ticker)}&tf=${c.tf}`)).json();
+    d = await (await fetch(`/api/analyze/rsi-pattern?ticker=${encodeURIComponent(c.ticker)}&tf=${c.tf}`)).json();
   } catch (e) { note.textContent = "Pattern fetch failed: " + e; return; }
   if (d.error) { note.textContent = d.error; return; }
 
@@ -1260,6 +1299,45 @@ async function loadRsiPattern(ticker) {
   c.patternLoaded = true;
   note.textContent = (c.baseNote ? c.baseNote + "  |  " : "") + `RSI pattern (${d.bars_used} bars): ${d.text}`;
 }
+
+// ---- fullscreen chart overlay ----
+function setFsTf(tf) {
+  document.querySelectorAll(".anFsTf").forEach((b) =>
+    (b.style.outline = b.dataset.tf === tf ? "2px solid #4f8ef7" : ""));
+}
+function fsTf() {
+  const b = [...document.querySelectorAll(".anFsTf")].find((x) => x.style.outline);
+  return b ? b.dataset.tf : "1d";
+}
+async function openFullscreen(ticker) {
+  $("anFS").style.display = "block";
+  $("anFsTicker").value = ticker;
+  const tf = (anCharts[ticker] && anCharts[ticker].tf) || "1d";
+  setFsTf(tf);
+  await loadTvChart(ticker, tf, "FS");
+}
+function closeFullscreen() {
+  if ($("anFS").style.display === "none") return;
+  $("anFS").style.display = "none";
+  if (anCharts.FS) {
+    try { anCharts.FS.main.remove(); anCharts.FS.rsi.remove(); } catch (e) {}
+    delete anCharts.FS;
+  }
+}
+$("anFsClose").addEventListener("click", closeFullscreen);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeFullscreen(); });
+$("anFsLoad").addEventListener("click", () => {
+  const t = ($("anFsTicker").value || "").trim().toUpperCase().split(/[\s,]+/)[0];
+  if (t) loadTvChart(t, fsTf(), "FS");
+});
+$("anFsTicker").addEventListener("keydown", (e) => { if (e.key === "Enter") $("anFsLoad").click(); });
+document.querySelectorAll(".anFsTf").forEach((b) =>
+  b.addEventListener("click", () => {
+    setFsTf(b.dataset.tf);
+    const t = ($("anFsTicker").value || "").trim().toUpperCase().split(/[\s,]+/)[0];
+    if (t) loadTvChart(t, b.dataset.tf, "FS");
+  }));
+$("anFsPat").addEventListener("click", () => loadRsiPattern("FS"));
 
 // Reversal alerts own only the "reversal" channel of the shared monitor.
 $("anRevBtn").addEventListener("click", async () => {
