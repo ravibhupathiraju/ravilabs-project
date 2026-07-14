@@ -409,31 +409,218 @@ def analyze(tickers: list[str]) -> list[dict]:
     return results
 
 
-def chart_data(ticker: str) -> dict:
-    """Series for the two charts: 130 daily bars + today's 5-minute bars."""
-    df = load_history(ticker, days=420)
-    if df.empty:
-        return {"error": "no data"}
-    tail = df.iloc[-130:]
-    daily = {
-        "dates": [str(d.date()) for d in tail.index],
-        "close": [round(float(v), 2) for v in tail["Close"]],
-        "sma20": [round(float(v), 2) if pd.notna(v) else None for v in tail["sma20"]],
-        "sma50": [round(float(v), 2) if pd.notna(v) else None for v in tail["sma50"]],
-        "sma200": [round(float(v), 2) if pd.notna(v) else None for v in tail["sma200"]],
-        "bb_upper": [round(float(v), 2) if pd.notna(v) else None for v in tail["bb_upper"]],
-        "bb_lower": [round(float(v), 2) if pd.notna(v) else None for v in tail["bb_lower"]],
+# --------------------------------------------------------------------------
+# Chart engine: multi-timeframe candles + TRAMA + levels + trends + RSI/BB
+# --------------------------------------------------------------------------
+
+def _trama(df: pd.DataFrame, length: int = 34) -> pd.Series:
+    """Trend Regularity Adaptive Moving Average (LuxAlgo port).
+
+    The smoothing factor is the squared SMA of "did the rolling high/low
+    just make a new extreme": flat when the range is quiet, fast when the
+    trend is regular. ama[i] = ama[i-1] + tc[i]^2 * (close[i] - ama[i-1]).
+    """
+    close = df["Close"].to_numpy(dtype=float)
+    hh = df["High"].rolling(length).max()
+    ll = df["Low"].rolling(length).min()
+    new_hi = (hh.diff() > 0)
+    new_lo = (ll.diff() < 0)
+    tc = ((new_hi | new_lo).astype(float).rolling(length).mean() ** 2).to_numpy()
+    out = np.full(len(close), np.nan)
+    prev = None
+    for i in range(len(close)):
+        if np.isnan(tc[i]):
+            continue
+        prev = close[i] if prev is None else prev + tc[i] * (close[i] - prev)
+        out[i] = prev
+    return pd.Series(out, index=df.index)
+
+
+def _pivot_indices(vals: np.ndarray, k: int = 3, mode: str = "high") -> list[int]:
+    idx = []
+    for i in range(k, len(vals) - k):
+        win = vals[i - k:i + k + 1]
+        if mode == "high" and vals[i] >= win.max():
+            idx.append(i)
+        elif mode == "low" and vals[i] <= win.min():
+            idx.append(i)
+    # collapse plateaus (consecutive indices) to their last bar
+    out = []
+    for i in idx:
+        if out and i - out[-1] <= k:
+            out[-1] = i
+        else:
+            out.append(i)
+    return out
+
+
+def _trendlines(df: pd.DataFrame, times: list) -> list[dict]:
+    """Support/resistance trendlines through the last two pivot lows/highs,
+    extended to the latest bar."""
+    out = []
+    n = len(df)
+    lo, hi = df["Low"].to_numpy(float), df["High"].to_numpy(float)
+    for mode, vals, name in (("high", hi, "resistance"), ("low", lo, "support")):
+        piv = [i for i in _pivot_indices(vals, 3, mode) if i >= n - 120]
+        if len(piv) < 2:
+            continue
+        i1, i2 = piv[-2], piv[-1]
+        if i2 <= i1:
+            continue
+        slope = (vals[i2] - vals[i1]) / (i2 - i1)
+        end_val = vals[i1] + slope * (n - 1 - i1)
+        direction = "falling" if slope < 0 else "rising" if slope > 0 else "flat"
+        out.append({
+            "label": f"{direction} {name}",
+            "points": [
+                {"time": times[i1], "value": round(float(vals[i1]), 2)},
+                {"time": times[n - 1], "value": round(float(end_val), 2)},
+            ],
+        })
+    return out
+
+
+def _rsi_divergence(df: pd.DataFrame, rsi: pd.Series, times: list) -> dict | None:
+    """Two-pivot price/RSI divergence within the last ~80 bars."""
+    n = len(df)
+    lookback = max(n - 80, 0)
+    close = df["Close"].to_numpy(float)
+    r = rsi.to_numpy(float)
+
+    lows = [i for i in _pivot_indices(close, 3, "low") if i >= lookback and not np.isnan(r[i])]
+    if len(lows) >= 2:
+        i1, i2 = lows[-2], lows[-1]
+        if close[i2] < close[i1] and r[i2] > r[i1] + 2:
+            return {
+                "direction": "bullish",
+                "text": (f"Bullish RSI divergence: price low {close[i2]:.2f} under {close[i1]:.2f} "
+                         f"while RSI rose {r[i1]:.0f} -> {r[i2]:.0f}"),
+                "price": [{"time": times[i1], "value": round(float(close[i1]), 2)},
+                          {"time": times[i2], "value": round(float(close[i2]), 2)}],
+                "rsi": [{"time": times[i1], "value": round(float(r[i1]), 2)},
+                        {"time": times[i2], "value": round(float(r[i2]), 2)}],
+                "marker_time": times[i2],
+            }
+    highs = [i for i in _pivot_indices(close, 3, "high") if i >= lookback and not np.isnan(r[i])]
+    if len(highs) >= 2:
+        i1, i2 = highs[-2], highs[-1]
+        if close[i2] > close[i1] and r[i2] < r[i1] - 2:
+            return {
+                "direction": "bearish",
+                "text": (f"Bearish RSI divergence: price high {close[i2]:.2f} over {close[i1]:.2f} "
+                         f"while RSI fell {r[i1]:.0f} -> {r[i2]:.0f}"),
+                "price": [{"time": times[i1], "value": round(float(close[i1]), 2)},
+                          {"time": times[i2], "value": round(float(close[i2]), 2)}],
+                "rsi": [{"time": times[i1], "value": round(float(r[i1]), 2)},
+                        {"time": times[i2], "value": round(float(r[i2]), 2)}],
+                "marker_time": times[i2],
+            }
+    return None
+
+
+def _key_levels(ticker: str) -> list[dict]:
+    """Day open, previous day high/low, and this week's high/low."""
+    d = load_history(ticker, days=30)
+    if d.empty or len(d) < 3:
+        return []
+    last, prev = d.iloc[-1], d.iloc[-2]
+    week_key = d.index[-1].isocalendar().week
+    week = d[[ts.isocalendar().week == week_key for ts in d.index]]
+    if len(week) < 2:  # Monday: this week is one bar, use the prior week
+        prior_key = d.index[-2].isocalendar().week
+        week = d[[ts.isocalendar().week == prior_key for ts in d.index]]
+    return [
+        {"key": "day_open", "label": "Day open", "price": round(float(last["Open"]), 2)},
+        {"key": "pdh", "label": "Prev day high", "price": round(float(prev["High"]), 2)},
+        {"key": "pdl", "label": "Prev day low", "price": round(float(prev["Low"]), 2)},
+        {"key": "wk_hi", "label": "Week high", "price": round(float(week["High"].max()), 2)},
+        {"key": "wk_lo", "label": "Week low", "price": round(float(week["Low"].min()), 2)},
+    ]
+
+
+def _resample_4h(df15: pd.DataFrame) -> pd.DataFrame:
+    """Two session-anchored 4-hour candles per day (09:30-13:30, 13:30-16:00)."""
+    rows = []
+    for day, g in df15.groupby(df15.index.date):
+        hm = g.index.strftime("%H:%M")
+        for lo, hi in (("09:30", "13:30"), ("13:30", "16:00")):
+            seg = g[(hm >= lo) & (hm < hi)]
+            if seg.empty:
+                continue
+            rows.append({
+                "t": seg.index[0],
+                "Open": float(seg["Open"].iloc[0]),
+                "High": float(seg["High"].max()),
+                "Low": float(seg["Low"].min()),
+                "Close": float(seg["Close"].iloc[-1]),
+                "Volume": float(seg["Volume"].sum()),
+            })
+    if not rows:
+        return pd.DataFrame()
+    out = pd.DataFrame(rows).set_index("t")
+    out.attrs["source"] = df15.attrs.get("source", "yfinance")
+    return out
+
+
+TIMEFRAMES = ("5m", "15m", "4h", "1d")
+
+
+def _bars_for(ticker: str, tf: str) -> pd.DataFrame:
+    if tf == "5m":
+        return marketdata.bars(ticker, "5Min", days=5, yf_symbol=ticker)
+    if tf == "15m":
+        return marketdata.bars(ticker, "15Min", days=20, yf_symbol=ticker)
+    if tf == "4h":
+        return _resample_4h(marketdata.bars(ticker, "15Min", days=140, yf_symbol=ticker))
+    df = load_history(ticker, days=560)
+    return df.iloc[-260:] if len(df) > 260 else df
+
+
+def _times(index: pd.DatetimeIndex, tf: str) -> list:
+    """lightweight-charts time values. Intraday: ET wall-clock encoded as UTC
+    epoch so the chart's UTC display shows New York session times."""
+    if tf == "1d":
+        return [str(ts.date()) for ts in index]
+    epoch = pd.Timestamp("1970-01-01")
+    return [int((ts - epoch).total_seconds()) for ts in index]
+
+
+def chart_data(ticker: str, tf: str = "1d") -> dict:
+    if tf not in TIMEFRAMES:
+        return {"error": f"timeframe must be one of {TIMEFRAMES}"}
+    df = _bars_for(ticker, tf)
+    if df.empty or len(df) < 40:
+        return {"error": f"not enough {tf} bars for {ticker}"}
+    times = _times(df.index, tf)
+
+    candles = [
+        {"time": t, "open": round(float(o), 2), "high": round(float(h), 2),
+         "low": round(float(l), 2), "close": round(float(c), 2)}
+        for t, o, h, l, c in zip(times, df["Open"], df["High"], df["Low"], df["Close"])
+    ]
+    trama = _trama(df, 34)
+    rsi = _rsi_series(df["Close"], 14)
+    mid = rsi.rolling(20).mean()
+    sd = rsi.rolling(20).std()
+
+    def line(series):
+        return [{"time": t, "value": round(float(v), 2)}
+                for t, v in zip(times, series) if pd.notna(v)]
+
+    return {
+        "ticker": ticker,
+        "tf": tf,
+        "source": df.attrs.get("source", "yfinance"),
+        "candles": candles,
+        "trama": line(trama),
+        "rsi": line(rsi),
+        "rsi_bb_mid": line(mid),
+        "rsi_bb_up": line(mid + 2 * sd),
+        "rsi_bb_lo": line(mid - 2 * sd),
+        "levels": _key_levels(ticker),
+        "trendlines": _trendlines(df, times),
+        "divergence": _rsi_divergence(df, rsi, times),
     }
-    bars = _intraday(ticker)
-    intraday = None
-    if not bars.empty:
-        vwap = _vwap(bars)
-        intraday = {
-            "times": [d.strftime("%H:%M") for d in bars.index],
-            "close": [round(float(v), 2) for v in bars["Close"]],
-            "vwap": [round(float(v), 2) for v in vwap],
-        }
-    return {"ticker": ticker, "daily": daily, "intraday": intraday}
 
 
 def scan_reversals(tickers: list[str]) -> list[dict]:

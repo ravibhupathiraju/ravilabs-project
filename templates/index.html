@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>Swing Trade Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; background: #0f1420; color: #e6e9f0; }
 h1 { margin-bottom: 0.2rem; }
@@ -361,7 +362,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
   <div class="field wide">
     <p class="note" id="anStatusLine"></p>
-    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and charts. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
+    <p class="note"><b>Two lenses per ticker:</b> the <b>swing view</b> scores the daily chart (trend structure, momentum, volatility position, volume, breakouts, pullback quality) and the <b>day view</b> scores today's session (VWAP, opening range, first-30-min direction, gap behaviour, intraday RSI, volume pace). Scores run &minus;100&hellip;+100; each component's contribution is shown so you can see <i>why</i>. Click a row to expand reasoning and a full trading chart: candles with switchable timeframes (<b>5m / 15m / 4H / 1D</b>), <b>TRAMA(34)</b> adaptive moving average, key levels (day open, prev day high/low, week high/low), auto-drawn <b>trendlines</b> through the last two pivot highs/lows, and an <b>RSI(14) pane with Bollinger bands</b> below &mdash; with <b>RSI divergence</b> drawn on both panes when detected. <b>Start reversal alerts</b> watches the entered tickers (every 15 min while the market is open) and fires a desktop toast on reversal evidence &mdash; RSI re-crossing 30/70, MACD histogram inflection, price/RSI divergence, reversal candles, VWAP reclaim/loss. Reversal alerts are informational only: they are logged to Alert history but never place paper orders.</p>
   </div>
 </div>
 
@@ -1012,7 +1013,7 @@ $("anBtn").addEventListener("click", async () => {
   const data = await callApi("/api/analyze", { tickers: $("anTickers").value },
                              $("anStatus"), [$("anBtn"), $("anRevBtn")]);
   if (!data) return;
-  Object.values(anCharts).forEach((c) => c.destroy());
+  Object.values(anCharts).forEach((c) => { c.main.remove(); c.rsi.remove(); });
   for (const k in anCharts) delete anCharts[k];
   $("anResults").style.display = "block";
   $("anMeta").textContent = `(${data.results.length} tickers)`;
@@ -1055,56 +1056,148 @@ $("anBtn").addEventListener("click", async () => {
       `<ul class="note" style="margin:0 0 0.5rem 1.25rem">${li(r.day.reasons)}</ul></div>` +
       `</div>` + revList +
       `<p class="note" style="margin:0.25rem 0">${r.prediction.basis} (EOD = ${r.prediction.eod.label}, week = ${r.prediction.eow.label}.)</p>` +
-      `<div class="charts"><div class="card"><canvas id="anD-${r.ticker}"></canvas></div>` +
-      `<div class="card"><canvas id="anI-${r.ticker}"></canvas></div></div></td>`;
+      `<div style="margin:0.5rem 0 0.25rem">` +
+      ["5m", "15m", "4h", "1d"].map((tf) =>
+        `<button class="run secondary anTf" data-ticker="${r.ticker}" data-tf="${tf}"` +
+        ` style="padding:0.25rem 0.9rem${tf === "1d" ? ";outline:2px solid #4f8ef7" : ""}">${tf.toUpperCase()}</button>`).join(" ") +
+      ` <span class="note" id="anSrc-${r.ticker}"></span></div>` +
+      `<div class="card" style="padding:0.5rem">` +
+      `<div id="anC-${r.ticker}" style="height:360px"></div>` +
+      `<div id="anR-${r.ticker}" style="height:150px;border-top:1px solid #1f2733"></div>` +
+      `<p class="note" id="anN-${r.ticker}" style="margin:0.4rem 0 0"></p></div></td>`;
     tbody.appendChild(detail);
+
+    detail.querySelectorAll(".anTf").forEach((btn) =>
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        detail.querySelectorAll(".anTf").forEach((b) => (b.style.outline = ""));
+        btn.style.outline = "2px solid #4f8ef7";
+        loadTvChart(r.ticker, btn.dataset.tf);
+      }));
 
     tr.addEventListener("click", async () => {
       const open = detail.style.display !== "none";
       detail.style.display = open ? "none" : "table-row";
       tr.cells[0].textContent = open ? "➕" : "➖";
-      if (!open && !anCharts["anD-" + r.ticker]) await loadAnalyzerCharts(r.ticker);
+      if (!open && !anCharts[r.ticker]) await loadTvChart(r.ticker, "1d");
     });
   }
 });
 
-async function loadAnalyzerCharts(ticker) {
+const TV_THEME = {
+  layout: { background: { type: "solid", color: "transparent" }, textColor: "#9aa3b5" },
+  grid: { vertLines: { color: "#1a2230" }, horzLines: { color: "#1a2230" } },
+  rightPriceScale: { borderColor: "#2a3444" },
+  timeScale: { borderColor: "#2a3444" },
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+};
+const LEVEL_STYLE = {
+  day_open: { color: "#4f8ef7", style: LightweightCharts.LineStyle.Dashed },
+  pdh: { color: "#9aa3b5", style: LightweightCharts.LineStyle.Dotted },
+  pdl: { color: "#9aa3b5", style: LightweightCharts.LineStyle.Dotted },
+  wk_hi: { color: "#b58cf0", style: LightweightCharts.LineStyle.Dotted },
+  wk_lo: { color: "#b58cf0", style: LightweightCharts.LineStyle.Dotted },
+};
+
+async function loadTvChart(ticker, tf) {
+  const note = $("anN-" + ticker);
+  note.textContent = "Loading " + tf.toUpperCase() + " chart...";
+  let d;
   try {
-    const d = await (await fetch("/api/analyze/chart?ticker=" + encodeURIComponent(ticker))).json();
-    if (d.error) return;
-    const ds = (label, data, color, dash) => ({
-      label, data, borderColor: color, borderWidth: dash ? 1 : 2,
-      borderDash: dash ? [4, 4] : [], pointRadius: 0, tension: 0.15, spanGaps: true,
+    d = await (await fetch(`/api/analyze/chart?ticker=${encodeURIComponent(ticker)}&tf=${tf}`)).json();
+  } catch (e) {
+    note.textContent = "Chart fetch failed: " + e;
+    return;
+  }
+  if (d.error) { note.textContent = d.error; return; }
+
+  if (anCharts[ticker]) {
+    anCharts[ticker].main.remove();
+    anCharts[ticker].rsi.remove();
+  }
+  const elMain = $("anC-" + ticker), elRsi = $("anR-" + ticker);
+  elMain.innerHTML = ""; elRsi.innerHTML = "";
+  const intraday = tf !== "1d";
+  const main = LightweightCharts.createChart(elMain, {
+    ...TV_THEME, height: 360,
+    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
+  });
+  const rsiChart = LightweightCharts.createChart(elRsi, {
+    ...TV_THEME, height: 150,
+    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
+  });
+  anCharts[ticker] = { main, rsi: rsiChart };
+
+  // -- price pane: candles + TRAMA(34) + levels + trendlines + divergence
+  const candles = main.addCandlestickSeries({
+    upColor: "#38c793", downColor: "#e5534b", borderVisible: false,
+    wickUpColor: "#38c793", wickDownColor: "#e5534b",
+  });
+  candles.setData(d.candles);
+  main.addLineSeries({
+    color: "#f0b429", lineWidth: 2, priceLineVisible: false,
+    lastValueVisible: false, crosshairMarkerVisible: false, title: "TRAMA 34",
+  }).setData(d.trama);
+  for (const lv of d.levels) {
+    const st = LEVEL_STYLE[lv.key] || { color: "#556072", style: 2 };
+    candles.createPriceLine({
+      price: lv.price, color: st.color, lineWidth: 1, lineStyle: st.style,
+      axisLabelVisible: true, title: lv.label,
     });
-    anCharts["anD-" + ticker] = new Chart($("anD-" + ticker), {
-      type: "line",
-      data: { labels: d.daily.dates, datasets: [
-        ds("Close", d.daily.close, "#4f8ef7"),
-        ds("SMA20", d.daily.sma20, "#f0b429", true),
-        ds("SMA50", d.daily.sma50, "#e08b4e", true),
-        ds("SMA200", d.daily.sma200, "#e5534b", true),
-        ds("BB upper", d.daily.bb_upper, "#556072", true),
-        ds("BB lower", d.daily.bb_lower, "#556072", true),
-      ]},
-      options: { plugins: { title: { display: true, text: ticker + " — daily (130 bars)" } },
-                 scales: { x: { ticks: { maxTicksLimit: 8 } } } },
+  }
+  const notes = [];
+  for (const t of d.trendlines) {
+    main.addLineSeries({
+      color: t.label.includes("support") ? "#7bc96f" : "#e08b4e", lineWidth: 1,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    }).setData(t.points);
+    notes.push(`trend: ${t.label}`);
+  }
+
+  // -- RSI pane: RSI(14) + Bollinger(20,2) on RSI + 30/70 bands
+  const rsiSeries = rsiChart.addLineSeries({
+    color: "#4f8ef7", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: "RSI 14",
+  });
+  rsiSeries.setData(d.rsi);
+  for (const [key, color] of [["rsi_bb_up", "#556072"], ["rsi_bb_mid", "#3a4557"], ["rsi_bb_lo", "#556072"]]) {
+    rsiChart.addLineSeries({
+      color, lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+    }).setData(d[key]);
+  }
+  for (const lvl of [30, 70]) {
+    rsiSeries.createPriceLine({
+      price: lvl, color: "#3a4557", lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false,
     });
-    if (d.intraday) {
-      anCharts["anI-" + ticker] = new Chart($("anI-" + ticker), {
-        type: "line",
-        data: { labels: d.intraday.times, datasets: [
-          ds("Close", d.intraday.close, "#4f8ef7"),
-          ds("VWAP", d.intraday.vwap, "#f0b429", true),
-        ]},
-        options: { plugins: { title: { display: true, text: ticker + " — today (5-min) vs VWAP" } },
-                   scales: { x: { ticks: { maxTicksLimit: 8 } } } },
-      });
-    } else {
-      const c = $("anI-" + ticker);
-      if (c) c.parentElement.innerHTML = `<p class="note">No intraday bars (market closed).</p>`;
-      anCharts["anI-" + ticker] = { destroy() {} };
-    }
-  } catch (e) { /* chart fetch failed; leave empty */ }
+  }
+
+  // -- divergence overlays on both panes
+  if (d.divergence) {
+    const bull = d.divergence.direction === "bullish";
+    const color = bull ? "#38c793" : "#e5534b";
+    const seg = { color, lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+                  priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+    main.addLineSeries(seg).setData(d.divergence.price);
+    rsiChart.addLineSeries(seg).setData(d.divergence.rsi);
+    candles.setMarkers([{
+      time: d.divergence.marker_time, position: bull ? "belowBar" : "aboveBar",
+      color, shape: bull ? "arrowUp" : "arrowDown", text: bull ? "Bull div" : "Bear div",
+    }]);
+    notes.push(d.divergence.text);
+  }
+
+  // -- keep both panes on the same time window
+  main.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+    if (r) rsiChart.timeScale().setVisibleLogicalRange(r);
+  });
+  rsiChart.timeScale().subscribeVisibleLogicalRangeChange((r) => {
+    if (r) main.timeScale().setVisibleLogicalRange(r);
+  });
+  main.timeScale().fitContent();
+
+  $("anSrc-" + ticker).textContent = `data: ${d.source}`;
+  note.textContent = notes.length ? notes.join("  |  ") : "";
 }
 
 // Reversal alerts own only the "reversal" channel of the shared monitor.

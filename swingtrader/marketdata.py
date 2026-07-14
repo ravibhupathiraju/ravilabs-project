@@ -129,6 +129,75 @@ def intraday(symbol: str, yf_symbol: str | None = None) -> pd.DataFrame:
     return df
 
 
+# yfinance equivalents for the generic bars() fetcher: interval + max period
+_YF_MAP = {"5Min": ("5m", "5d"), "15Min": ("15m", "60d"), "1Hour": ("1h", "180d")}
+
+
+def bars(symbol: str, timeframe: str = "5Min", days: int = 5,
+         yf_symbol: str | None = None) -> pd.DataFrame:
+    """Multi-day OHLCV bars on an intraday timeframe, regular session only.
+
+    Alpaca IEX first (history goes back years), yfinance fallback (5m/15m
+    limited to ~60 days there). Index is tz-naive ET. Daily bars should come
+    from data.load_history instead (adjusted, longer).
+    """
+    yf_sym = yf_symbol or symbol
+    ap_sym = _alpaca_symbol(symbol)
+    now = datetime.now(NY)
+    if ap_sym is not None:
+        # Alpaca paginates (page size can be well under `limit`); without
+        # following next_page_token only the OLDEST page comes back.
+        raw, token = [], None
+        for _ in range(12):
+            params = {
+                "timeframe": timeframe,
+                "start": (now - timedelta(days=days)).isoformat(),
+                "end": now.isoformat(),
+                "limit": 10000,
+                "feed": "iex",
+                "adjustment": "split",
+            }
+            if token:
+                params["page_token"] = token
+            data = _get(f"/v2/stocks/{ap_sym}/bars", params)
+            if data is None:
+                break
+            raw.extend(data.get("bars") or [])
+            token = data.get("next_page_token")
+            if not token:
+                break
+        if raw:
+            df = pd.DataFrame(raw).rename(columns={
+                "o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"
+            })
+            idx = pd.to_datetime(df["t"], utc=True).dt.tz_convert("America/New_York")
+            df.index = idx.dt.tz_localize(None)
+            df = df[["Open", "High", "Low", "Close", "Volume"]].astype(float)
+            hm = df.index.strftime("%H:%M")
+            df = df[(hm >= "09:30") & (hm < "16:00")].dropna(subset=["Close"])
+            if not df.empty:
+                df.attrs["source"] = "alpaca"
+                return df
+
+    interval, max_period = _YF_MAP.get(timeframe, ("5m", "5d"))
+    period = f"{min(days, int(max_period[:-1]))}d"
+    try:
+        df = yf.Ticker(yf_sym).history(period=period, interval=interval, auto_adjust=True)
+    except Exception:
+        return pd.DataFrame()
+    if df is None or df.empty:
+        return pd.DataFrame()
+    if isinstance(df.columns, pd.MultiIndex):
+        df.columns = df.columns.get_level_values(0)
+    if getattr(df.index, "tz", None) is not None:
+        df.index = df.index.tz_convert("America/New_York").tz_localize(None)
+    df = df.dropna(subset=["Close"])
+    hm = df.index.strftime("%H:%M")
+    df = df[(hm >= "09:30") & (hm < "16:00")]
+    df.attrs["source"] = "yfinance"
+    return df
+
+
 def latest_price(symbol: str) -> float | None:
     """Latest trade price from Alpaca IEX; None when unavailable."""
     ap_sym = _alpaca_symbol(symbol)

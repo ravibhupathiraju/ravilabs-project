@@ -207,7 +207,8 @@ def api_analyze_chart():
     ticker = (request.args.get("ticker") or "").upper().strip()
     if not ticker:
         return jsonify({"error": "ticker required"}), 400
-    return jsonify(analyzer.chart_data(ticker))
+    tf = (request.args.get("tf") or "1d").lower()
+    return jsonify(analyzer.chart_data(ticker, tf=tf))
 
 
 @app.post("/api/bear/scan")
