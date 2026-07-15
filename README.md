@@ -62,11 +62,11 @@ A second tab backtests five same-day (open and close the same session) strategie
 
 **Limitations to know:** free 5-minute data (yfinance) only covers ~60 days, so the three intraday strategies clip older date ranges (the UI warns when this happens). Gap Fade and the straddle proxy use daily bars and work for any range. The straddle sell is a volatility proxy in % of the underlying, not real option prices; true 0DTE options backtests require paid historical options data (for example CBOE DataShop).
 
-## Live alerts tab (0DTE + swing)
+## Alerts / Trades tab (consolidated) + live monitors
 
-A third tab turns both the five 0DTE strategies and the six swing strategies into a live alert system:
+Monitors are started from their own tabs — **0DTE intraday** (Start 0DTE monitor, using the backtest's symbol/strategy checkboxes), **Swing strategies** (Start swing alerts, using the checked strategies only), **Bear strategy**, and **Analyzer** (reversal watch). All of them log to one consolidated **Alerts / Trades** tab: filter by date range / type (0DTE, swing, reversal) / ticker, with a **P/L summary** per ticker (closed trades, wins, total and average P/L %, exact paper $ P/L where an Alpaca order was placed) plus a TOTAL row, and the full alert history beneath. A **Today** button snaps the filters to a single-day view.
 
-- **Start monitor** launches a background poller (every 60s during 9:30–16:00 ET, Mon–Fri) that evaluates the selected strategies on today's data for the selected symbols
+- The monitor is a background poller (every 60s during 9:30–16:00 ET, Mon–Fri) that evaluates the selected strategies on today's data for the selected symbols
 - On an entry signal a **Windows desktop notification** fires with the entry time, entry price, stop price, and planned exit; a second notification fires when the trade exits (stop hit, condition met, or 16:00 close)
 - No one-alert-per-day limit: after an ORB stop-out or a VWAP-touch exit, the next signal the same session fires a fresh, numbered alert (Momentum-30, Gap Fade and the straddle have a single decision point per day by nature)
 - **Swing alerts** scan a chosen ticker universe (watchlist, top 50, S&P 100) every 15 minutes — plus once at monitor start, so an evening start still catches the day's close signals. Lifecycle mirrors the backtest: a **signal** alert on the setup (close, provisional stop, planned exit) → an **entry** alert when the position fills at the next session's open (exact ATR stop and target) → an **exit** alert on stop, profit target, signal exit, time stop, or pre-earnings close, with P/L. Tracking reconstructs correctly even if the app was off for a few days

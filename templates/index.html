@@ -43,7 +43,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 <div class="tabs">
   <button class="tab active" data-tab="swingTab">Swing strategies</button>
   <button class="tab" data-tab="zdteTab">0DTE intraday</button>
-  <button class="tab" data-tab="alertTab">0DTE alerts</button>
+  <button class="tab" data-tab="alertTab">Alerts / Trades</button>
   <button class="tab" data-tab="bearTab">Bear strategy</button>
   <button class="tab" data-tab="analyzerTab">Analyzer</button>
 </div>
@@ -170,7 +170,13 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   </div>
   <div class="actions">
     <button class="run" id="zRunBtn">Run 0DTE backtest</button>
+    <button class="run" id="zAlertBtn">Start 0DTE monitor</button>
+    <button class="run secondary" id="zStopBtn">Stop monitor</button>
     <span class="status" id="zStatus"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" id="zStatusLine">Monitor not running.</p>
+    <p class="note"><b>Start 0DTE monitor</b> watches the symbols and strategies checked above live: while the market is open (9:30&ndash;16:00 ET, Mon&ndash;Fri) it polls every 60 seconds and fires a desktop notification on each entry and exit. All checked strategies are alerted and logged; only the strategies in <code>zerodte_strategies</code> (VWAP by default) are paper traded. Everything it produces lands in the <b>Alerts / Trades</b> tab. Swing alerts are configured on the Swing strategies tab and run independently &mdash; starting one never disturbs the other.</p>
   </div>
 </div>
 
@@ -189,43 +195,10 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 </div>
 </div>
 
-<!-- ============ 0DTE ALERTS TAB ============ -->
+<!-- ============ ALERTS / TRADES TAB (consolidated) ============ -->
 <div id="alertTab" style="display:none">
-<div class="card controls">
-  <div class="field wide">
-    <label>0DTE symbols to monitor</label>
-    <div class="checks">
-      <label class="check"><input type="checkbox" name="asym" value="SPY" checked> SPY</label>
-      <label class="check"><input type="checkbox" name="asym" value="SPX" checked> SPX</label>
-      <label class="check"><input type="checkbox" name="asym" value="QQQ" checked> QQQ</label>
-      <label class="check"><input type="checkbox" name="asym" value="IWM" checked> IWM</label>
-    </div>
-  </div>
-  <div class="field wide">
-    <label>0DTE strategies to monitor</label>
-    <div class="checks">
-      <label class="check"><input type="checkbox" name="astrat" value="orb15" checked> ORB 15-min Breakout</label>
-      <label class="check"><input type="checkbox" name="astrat" value="vwap" checked> VWAP Reversion</label>
-      <label class="check"><input type="checkbox" name="astrat" value="momentum30" checked> First 30-min Momentum</label>
-      <label class="check"><input type="checkbox" name="astrat" value="gapfade" checked> Gap Fade</label>
-      <label class="check"><input type="checkbox" name="astrat" value="straddle" checked> Expected-Move Straddle Sell</label>
-    </div>
-  </div>
-  <div class="actions">
-    <button class="run" id="aStartBtn">Start monitor</button>
-    <button class="run secondary" id="aStopBtn">Stop monitor</button>
-    <span class="status" id="aStatus"></span>
-  </div>
-  <div class="field wide">
-    <p class="note" id="aStatusLine">Monitor not running.</p>
-    <p class="note">While the market is open (9:30&ndash;16:00 ET, Mon&ndash;Fri) the monitor polls yfinance every 60 seconds, fires a Windows desktop notification when a strategy signals an entry (with entry time, price, stop, and planned exit), and another when the trade exits. <b>All five strategies checked above are alerted and logged to Alert history.</b> Paper trading is separate and deliberately narrower &mdash; see the panel below. Swing alerts are configured on the Swing strategies tab; the two run independently, so starting this monitor does not disturb them. Data lags real time by a minute or two. Keep this app running for alerts to fire; the browser tab may be closed.</p>
-  </div>
-</div>
+<p class="note" id="ahMonLine">Monitor not running.</p>
 
-<h3>Paper trading (Alpaca)</h3>
-<div class="card" id="brokerBox-a" data-scope="0dte"></div>
-
-<h3>Alert history</h3>
 <div class="card controls">
   <div class="field">
     <label for="ahStart">From date</label>
@@ -249,16 +222,28 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
     <input type="text" id="ahSyms" placeholder="e.g. SPY, AAPL, NVDA">
   </div>
   <div class="actions">
-    <button class="run" id="ahRefreshBtn">Refresh history</button>
+    <button class="run" id="ahRefreshBtn">Refresh</button>
+    <button class="run secondary" id="ahTodayBtn">Today</button>
     <span class="status" id="ahStatus"></span>
   </div>
 </div>
 
+<h3>P/L summary <span id="ahSumMeta" class="meta"></span></h3>
+<table>
+  <thead><tr><th>Symbol</th><th>Closed trades</th><th>Wins</th><th>Total P/L %</th><th>Avg P/L %</th><th>Paper $ P/L</th><th>Open / signals</th></tr></thead>
+  <tbody id="ahSumBody"><tr><td colspan="7">No closed trades in the selected range.</td></tr></tbody>
+</table>
+<p class="note">Closed trades only, from the filters above (set From = To = one date for a single-day view, or click <b>Today</b>). <b>Total P/L %</b> sums per-trade returns (trades are roughly equal-sized, so this tracks the strategy). <b>Paper $ P/L</b> is exact for alerts that placed an Alpaca paper order (shares &times; entry &times; P/L%); alerts without a paper order show &mdash; and are excluded from the $ total. Reversal alerts are informational and never counted.</p>
+
+<h3>Alert history</h3>
 <table>
   <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Paper</th><th>Status</th></tr></thead>
   <tbody id="ahBody"><tr><td colspan="15">No alerts recorded yet.</td></tr></tbody>
 </table>
-<p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Educational use only; not financial advice.</p>
+<p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Monitors are started from their own tabs: 0DTE on <b>0DTE intraday</b>, swing on <b>Swing strategies</b>, bear on <b>Bear strategy</b>, reversals on <b>Analyzer</b>. Educational use only; not financial advice.</p>
+
+<h3>Paper trading (Alpaca)</h3>
+<div class="card" id="brokerBox-a" data-scope="0dte"></div>
 </div>
 
 <!-- ============ BEAR STRATEGY TAB ============ -->
@@ -406,6 +391,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
     ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
+    if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
     if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); loadBroker(); }
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
   })
@@ -659,9 +645,10 @@ function renderAlertStatus(s) {
   } else {
     html = `<span style="color:#e5534b">&#9679; Monitor not running</span> (${s.now_et})`;
   }
-  $("aStatusLine").innerHTML = html;
-  $("swStatusLine").innerHTML = html;
-  $("bStatusLine").innerHTML = html;
+  for (const id of ["zStatusLine", "swStatusLine", "bStatusLine", "ahMonLine"]) {
+    const el = $(id);
+    if (el) el.innerHTML = html;
+  }
 }
 
 async function refreshAlertStatus() {
@@ -671,7 +658,8 @@ async function refreshAlertStatus() {
   } catch (e) { /* server not reachable; leave last status */ }
 }
 setInterval(() => {
-  if ($("alertTab").style.display !== "none" || $("swingTab").style.display !== "none") refreshAlertStatus();
+  if ($("alertTab").style.display !== "none" || $("swingTab").style.display !== "none" ||
+      $("zdteTab").style.display !== "none") refreshAlertStatus();
 }, 15000);
 refreshAlertStatus(); // initial load (swing tab is visible first)
 
@@ -697,21 +685,22 @@ $("swStopBtn").addEventListener("click", async () => {
   renderAlertStatus(data);
 });
 
-// 0DTE tab owns only the 0DTE channel: swing alerts keep running untouched.
-$("aStartBtn").addEventListener("click", async () => {
+// 0DTE monitor lives on the 0DTE intraday tab and reuses the backtest's
+// symbol/strategy checkboxes. It owns only the 0DTE channel: swing alerts
+// keep running untouched.
+$("zAlertBtn").addEventListener("click", async () => {
   const body = {
     configure: ["zerodte"],
-    symbols: [...document.querySelectorAll("input[name=asym]:checked")].map((c) => c.value),
-    strategies: [...document.querySelectorAll("input[name=astrat]:checked")].map((c) => c.value),
+    symbols: [...document.querySelectorAll("input[name=zsym]:checked")].map((c) => c.value),
+    strategies: [...document.querySelectorAll("input[name=zstrat]:checked")].map((c) => c.value),
   };
-  if (!body.symbols.length) { $("aStatus").textContent = "Error: select at least one symbol"; return; }
-  const data = await callApi("/api/alerts/start", body, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
+  if (!body.symbols.length) { $("zStatus").textContent = "Error: select at least one symbol"; return; }
+  const data = await callApi("/api/alerts/start", body, $("zStatus"), [$("zAlertBtn"), $("zStopBtn")]);
   renderAlertStatus(data);
-  loadBroker();
 });
 
-$("aStopBtn").addEventListener("click", async () => {
-  const data = await callApi("/api/alerts/stop", {}, $("aStatus"), [$("aStartBtn"), $("aStopBtn")]);
+$("zStopBtn").addEventListener("click", async () => {
+  const data = await callApi("/api/alerts/stop", {}, $("zStatus"), [$("zAlertBtn"), $("zStopBtn")]);
   renderAlertStatus(data);
 });
 
@@ -793,6 +782,7 @@ async function loadAlertHistory() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "request failed");
     $("ahStatus").textContent = "";
+    renderAlertSummary(data.alerts);
     const tbody = $("ahBody");
     tbody.innerHTML = "";
     if (!data.alerts.length) {
@@ -824,6 +814,60 @@ async function loadAlertHistory() {
   }
 }
 $("ahRefreshBtn").addEventListener("click", loadAlertHistory);
+$("ahTodayBtn").addEventListener("click", () => {
+  const today = new Date();
+  $("ahStart").valueAsDate = today;
+  $("ahEnd").valueAsDate = today;
+  loadAlertHistory();
+});
+
+// P/L rollup of the filtered alerts: per-ticker rows + a totals row.
+// Percentages sum per-trade returns; dollars are exact where a paper order
+// was placed (qty x entry x P/L%). Reversal alerts are informational only.
+function renderAlertSummary(alerts) {
+  const by = {};
+  for (const a of alerts) {
+    if (a.kind === "reversal") continue;
+    const b = by[a.symbol] || (by[a.symbol] = { closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 });
+    if (a.status === "closed" && a.pnl_pct !== null) {
+      b.closed++;
+      if (a.pnl_pct > 0) b.wins++;
+      b.pnl += a.pnl_pct;
+      if (a.broker_qty && a.entry_price) {
+        b.dollars += a.broker_qty * a.entry_price * a.pnl_pct / 100;
+        b.hasD = true;
+      }
+    } else {
+      b.open++;
+    }
+  }
+  $("ahSumMeta").textContent =
+    $("ahStart").value === $("ahEnd").value ? `(${$("ahStart").value})` : `(${$("ahStart").value} → ${$("ahEnd").value})`;
+  const body = $("ahSumBody");
+  const rows = Object.entries(by).filter(([, b]) => b.closed || b.open);
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="7">No trades in the selected range.</td></tr>`;
+    return;
+  }
+  rows.sort((x, y) => y[1].pnl - x[1].pnl);
+  const pct = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`;
+  const usd = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}</span>`;
+  const tot = { closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 };
+  body.innerHTML = rows.map(([sym, b]) => {
+    tot.closed += b.closed; tot.wins += b.wins; tot.pnl += b.pnl; tot.open += b.open;
+    if (b.hasD) { tot.dollars += b.dollars; tot.hasD = true; }
+    return `<tr><td><b>${sym}</b></td><td>${b.closed}</td>` +
+      `<td>${b.closed ? `${b.wins}/${b.closed}` : "&mdash;"}</td>` +
+      `<td>${b.closed ? pct(b.pnl) : "&mdash;"}</td>` +
+      `<td>${b.closed ? pct(b.pnl / b.closed) : "&mdash;"}</td>` +
+      `<td>${b.hasD ? usd(b.dollars) : "&mdash;"}</td><td>${b.open || "&mdash;"}</td></tr>`;
+  }).join("") +
+    `<tr style="border-top:2px solid #2a3444"><td><b>TOTAL</b></td><td><b>${tot.closed}</b></td>` +
+    `<td><b>${tot.closed ? `${tot.wins}/${tot.closed}` : "&mdash;"}</b></td>` +
+    `<td><b>${tot.closed ? pct(tot.pnl) : "&mdash;"}</b></td>` +
+    `<td><b>${tot.closed ? pct(tot.pnl / tot.closed) : "&mdash;"}</b></td>` +
+    `<td><b>${tot.hasD ? usd(tot.dollars) : "&mdash;"}</b></td><td><b>${tot.open || "&mdash;"}</b></td></tr>`;
+}
 
 // ================= BEAR STRATEGY TAB =================
 let bCurveChart;
@@ -1167,6 +1211,31 @@ async function loadTvChart(ticker, tf, key) {
     wickUpColor: "#38c793", wickDownColor: "#e5534b",
   });
   candles.setData(d.candles);
+
+  // Crosshair legend: the hovered candle's time + OHLC, pinned to the top
+  // left of the price pane (the axis tooltip can clip at the pane edge).
+  elMain.style.position = "relative";
+  const legend = document.createElement("div");
+  legend.style.cssText = "position:absolute;top:6px;left:8px;z-index:10;font-size:0.8rem;" +
+    "color:#c7d0e0;background:rgba(13,20,32,0.75);padding:2px 8px;border-radius:4px;pointer-events:none";
+  elMain.appendChild(legend);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const fmtT = (t) => {
+    if (typeof t === "string") return t;                       // 1D: 'YYYY-MM-DD'
+    if (typeof t === "object") return `${t.year}-${pad2(t.month)}-${pad2(t.day)}`;
+    const dt = new Date(t * 1000);                             // intraday: ET encoded as UTC
+    return `${pad2(dt.getUTCMonth() + 1)}/${pad2(dt.getUTCDate())} ${pad2(dt.getUTCHours())}:${pad2(dt.getUTCMinutes())}`;
+  };
+  const idle = `<b>${ticker}</b> ${tf.toUpperCase()} — hover a candle for time + OHLC`;
+  legend.innerHTML = idle;
+  main.subscribeCrosshairMove((param) => {
+    const bar = param.time !== undefined && param.seriesData ? param.seriesData.get(candles) : null;
+    if (!bar) { legend.innerHTML = idle; return; }
+    const chg = ((bar.close - bar.open) / bar.open) * 100;
+    legend.innerHTML = `<b>${ticker}</b> ${fmtT(param.time)} &nbsp; ` +
+      `O ${bar.open}&nbsp; H ${bar.high}&nbsp; L ${bar.low}&nbsp; C ${bar.close}&nbsp; ` +
+      `<span style="color:${chg >= 0 ? "#38c793" : "#e5534b"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
+  });
   main.addLineSeries({
     color: "#f0b429", lineWidth: 2, priceLineVisible: false,
     lastValueVisible: false, crosshairMarkerVisible: false, title: "TRAMA 34",
