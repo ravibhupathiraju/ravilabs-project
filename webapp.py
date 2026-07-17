@@ -9,7 +9,9 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import alerts, analyzer, backtest, bear, broker, screener, zerodte
+from swingtrader import (
+    alerts, analyzer, backtest, bear, broker, fibdiv, patterns, screener, tracker, zerodte,
+)
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
@@ -147,6 +149,7 @@ def api_alerts_start():
             swing_tickers=payload.get("swing_tickers") or [],
             earnings_buffer=int(buffer_raw) if buffer_raw not in (None, "") else None,
             reversal_tickers=payload.get("reversal_tickers") or [],
+            pattern_on=payload.get("pattern_on"),
             configure=configure,
         )
     )
@@ -218,6 +221,99 @@ def api_analyze_rsi_pattern():
         return jsonify({"error": "ticker required"}), 400
     tf = (request.args.get("tf") or "1d").lower()
     return jsonify(analyzer.rsi_pattern(ticker, tf=tf))
+
+
+@app.post("/api/patterns/run")
+def api_patterns_run():
+    payload = request.get_json(force=True)
+    try:
+        data = patterns.run(
+            ticker=(payload.get("ticker") or "QQQ").upper().strip(),
+            lookback_days=int(payload.get("lookback_days") or 365),
+            target=float(payload.get("target") or 1.0),
+            interval_min=int(payload.get("interval_min") or 30),
+            min_support=int(payload.get("min_support") or 40),
+            force=bool(payload.get("force")),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(data)
+
+
+@app.get("/api/misc/fibdiv")
+def api_misc_fibdiv():
+    ticker = (request.args.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    return jsonify(fibdiv.analyze(ticker))
+
+
+@app.post("/api/misc/scan")
+def api_misc_scan():
+    payload = request.get_json(force=True)
+    tickers = _tickers_from(payload)
+    if not tickers:
+        return jsonify({"error": "no tickers selected"}), 400
+    only_div = payload.get("only_divergence", True)
+    rows = fibdiv.scan(tickers, only_divergence=bool(only_div))
+    return jsonify({"results": rows, "tickers_scanned": len(tickers)})
+
+
+@app.get("/api/misc/tracker")
+def api_misc_tracker():
+    return jsonify(tracker.list_all())
+
+
+@app.post("/api/misc/tracker/add")
+def api_misc_tracker_add():
+    payload = request.get_json(force=True)
+    return jsonify(tracker.add(payload.get("items") or []))
+
+
+@app.post("/api/misc/tracker/delete")
+def api_misc_tracker_delete():
+    payload = request.get_json(force=True)
+    return jsonify(tracker.delete(int(payload.get("id")), payload.get("bucket") or "active"))
+
+
+@app.post("/api/misc/tracker/archive")
+def api_misc_tracker_archive():
+    payload = request.get_json(force=True)
+    return jsonify(tracker.archive(int(payload.get("id")), payload.get("note") or ""))
+
+
+@app.post("/api/patterns/arm")
+def api_patterns_arm():
+    payload = request.get_json(force=True)
+    try:
+        cfg = patterns.arm(
+            ticker=(payload.get("ticker") or "QQQ").upper().strip(),
+            lookback_days=int(payload.get("lookback_days") or 365),
+            target=float(payload.get("target") or 1.0),
+            interval_min=int(payload.get("interval_min") or 30),
+            min_support=int(payload.get("min_support") or 40),
+            min_win=float(payload.get("min_win") or 70.0),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(cfg)
+
+
+@app.get("/api/patterns/armed")
+def api_patterns_armed():
+    return jsonify(patterns.live_status(request.args.get("ticker") or None))
+
+
+@app.get("/api/patterns/cache")
+def api_patterns_cache():
+    return jsonify({"studies": patterns.cached_studies()})
+
+
+@app.post("/api/patterns/disarm")
+def api_patterns_disarm():
+    payload = request.get_json(silent=True) or {}
+    patterns.disarm(payload.get("ticker") or None)
+    return jsonify(patterns.live_status())
 
 
 @app.post("/api/bear/scan")

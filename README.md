@@ -99,6 +99,41 @@ The module only ever talks to the paper endpoint — it cannot place live trades
 
 Every Alpaca call falls back to yfinance automatically (no keys, cash indices like SPX/^GSPC, request failure), so the app runs unchanged without credentials. Note the free IEX feed reports IEX-exchange volume only (~3% of consolidated tape): prices are reliable, but volume-vs-average comparisons always use consolidated daily-bar volume — the code handles this. Earnings calendar still comes from Yahoo, which has been flaky; a Finnhub integration is the planned fix.
 
+## Pattern lab (deep-dive day-trading analysis)
+
+A research tab that answers one question: **which combinations of measurable market conditions consistently precede QQQ (or any liquid ticker) touching +$1 before −$1 — or the reverse — from the current price, same session?** That is the shape of a same-day open/close trade: enter when the conditions line up, exit at the $1 move or the close.
+
+- **Decision points** every 15/30/60 minutes from 10:00 to 14:30 ET over the lookback (up to ~2 years of Alpaca 5-minute history); each is labeled by which barrier was touched first (up / down / neither by the close; both-in-one-bar counts for neither side — conservative)
+- **12 conditions per decision point**, all known at that moment (no look-ahead): time of day, overnight gap, opening-range position, VWAP side + slope, intraday RSI(14), position in the prior day's range, day of week, first-30-min direction, prior-day direction, range consumed vs the 14-day average, 30-min momentum
+- **Mining with honesty checks**: every single/pair/triple combination is tested; days are split ~70/30 into train/test by time, and a pattern is ranked by its *worst* half — it must beat the baseline in both periods to appear. Supersets that don't beat the simpler pattern inside them are dropped. Overlap and multiple-testing caveats are stated on the tab
+- **Event days excluded**: FOMC decision days (2023–2026 built in), NFP first-Fridays and half sessions (computed), plus anything added to `event_days.json` (paste CPI dates there — the file ships with empty lists to extend)
+- Output: ranked long and short pattern tables (samples, distinct days, win % overall/train/test, edge vs baseline in percentage points, average minutes to the $1 touch) plus a single-condition breakdown
+
+**Study cache.** Each deep dive is cached on disk (`patterns_cache.json`) keyed by ticker + target + lookback + decision points + min samples. Re-running with the same settings returns the saved study instantly; it recomputes only when the cached study is older than 30 days, or when you tick **force re-run**. The result shows whether it was cached and how old it is.
+
+**Live pattern alerts (decoupled from the deep dive).** The alerts panel has its **own** ticker / target / lookback / decision-points / min-samples inputs, so studying one configuration and alerting on another are independent. **Arm & start alerts** looks up the **cached study** for those settings (it does *not* re-run an existing study — it computes and caches only if nothing is there), keeps every long/short pattern at or above your win% cutoff, and stores it **per ticker** in `patterns_armed.json`. A monitor channel then checks **each armed ticker against its own patterns** every 5 minutes during market hours; on a match it fires a desktop toast and logs an entry to **Alerts / Trades** (kind **Pattern**, informational — no paper order), then tracks it to the +$/−$ barrier or the close so real win rate and P/L accrue against the historical expectation. Arm several tickers at once — each is watched against its own study; the armed panel shows which patterns match *right now* and lets you disarm per ticker.
+
+Patterns found here are starting hypotheses to forward-test, not guarantees.
+
+## Misc tab (divergence play detector)
+
+Answers "does the *divergence play* exist on this ticker right now?" — the classic swing-analyst setup where price makes a lower low while RSI makes a higher low (bullish divergence: momentum turns up before price), the bounce measured with a Fibonacci retracement whose **golden pocket (0.618–0.786)** and **EQ (50%)** are the decision zones and prior LH/HH the targets.
+
+**Scan a whole watchlist.** Pick any universe (watchlist / top 50 / S&P 100 / TradeLab / all, plus custom tickers) and scan every name at once — it ranks the ones showing a divergence by a signed **buy/sell score** (−100 strong sell … +100 strong buy, built from the divergence type, MACD/EQ confirmation, trend agreement and location at a key level), with the divergence summary on hover. Scans run in parallel (≈50 names in ~6s) and are daily-based for speed; click any row to open that ticker's full multi-timeframe breakdown below.
+
+For a single ticker it:
+- Auto-detects the swing structure (HH → LH → LL) from daily pivots, choosing the most recent completed leg ("smaller picture inside the bigger picture")
+- Checks both **regular** divergence (vs recent pivots) and **hidden** divergence (vs the prior major extreme), reading RSI at the trough/peak near each price pivot rather than the exact bar
+- Confirms with a **MACD** cross, states plainly whether the setup **exists / is confirmed / has failed**, and where price sits in the swing
+- Draws it all on a daily chart: swing markers, every Fibonacci level, the golden-pocket band, and the divergence line on both the price and RSI panes — no external drawing extension needed
+- Adds a **price-trend read** (EMA20/50/200 structure → up / down / sideways badge) with auto trendlines, a **TRAMA(24)** adaptive trend line, and an **anchored VWAP from the swing low** (the average price paid since the bottom, a dynamic support)
+- **Smaller vs bigger picture (multi-timeframe stack):** scans divergence on **Daily → 4H → 15M** and synthesizes whether they agree — *stacked* (daily setup echoed on the smaller pictures = high conviction), *leading* (smaller pictures diverge early, daily not yet confirmed), *conflict* (smaller against the bigger trend = likely just a pullback), or *bigger-picture only*. The same golden-pocket price band draws on every timeframe, and you can flip the chart between them to watch each smaller picture react at the bigger-picture levels. A built-in coaching panel teaches the concept (regular = reversal, hidden = continuation; only trust a smaller-picture divergence that agrees with the bigger picture and fires at a level)
+- Detects the **bearish mirror** (higher high with lower-high RSI, fib measured down) when the recent extreme is a high
+
+Validated against a live analyst call on AMZN: it independently reproduced the same HH/LH/LL swing (278.56 / 274.75 / 225.55), golden pocket (255.96–264.22) and EQ (250.15), and flagged the bullish divergence as confirmed.
+
+**Daily tracker (Misc sub-tab).** Tick candidates in the scan and **Add selected to tracker** to watch them day-over-day: each row shows the ticker, the date and price you added it, the live price, and P/L-since-added (signed to the thesis — a bearish pick gains when price falls). Click a ticker for its date-wise price-trend chart with your entry marked. **Archive** a pick with a note when the trade plays out, or **delete** it. State persists in `misc_tracker.json` (git-ignored).
+
 ## Bear strategy tab (TradeLab CRWV pullback score)
 
 A dedicated tab hosting a faithful port of the TradeLab "CRWV" swing model — a 0–100 scored pullback-in-uptrend system (validated to produce identical scores, levels and reasons on TradeLab's own research output):

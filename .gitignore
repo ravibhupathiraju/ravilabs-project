@@ -6,3 +6,5 @@ venv/
 .DS_Store
 alerts.db
 alpaca.json
+patterns_armed.json
+misc_tracker.json

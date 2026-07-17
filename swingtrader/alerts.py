@@ -29,7 +29,7 @@ from zoneinfo import ZoneInfo
 import pandas as pd
 import yfinance as yf
 
-from . import analyzer, broker, marketdata, screener, zerodte
+from . import analyzer, broker, marketdata, patterns, screener, zerodte
 from .data import load_history
 from .earnings import earnings_dates, near_earnings
 from .strategies import STRATEGIES as SWING_STRATEGIES
@@ -48,6 +48,7 @@ DB_PATH = Path(__file__).resolve().parent.parent / "alerts.db"
 NY = ZoneInfo("America/New_York")
 POLL_SECONDS = 60
 SWING_POLL_SECONDS = 900  # swing signals form on daily bars; 15 min is plenty
+PATTERN_POLL_SECONDS = 300  # intraday pattern conditions, checked every 5 min
 SESSION_END = "16:00"
 
 PLANNED_EXITS = {
@@ -162,7 +163,7 @@ def history(
     if symbols:
         q += f" AND symbol IN ({','.join('?' * len(symbols))})"
         params.extend(s.upper() for s in symbols)
-    if kind in ("0dte", "swing", "reversal"):
+    if kind in ("0dte", "swing", "reversal", "pattern"):
         q += " AND kind = ?"
         params.append(kind)
     if strategy:
@@ -185,7 +186,7 @@ def performance(strategy: str | None = None, kind: str | None = None) -> dict:
     if strategy:
         q += " AND strategy = ?"
         params.append(strategy)
-    if kind in ("0dte", "swing", "reversal"):
+    if kind in ("0dte", "swing", "reversal", "pattern"):
         q += " AND kind = ?"
         params.append(kind)
     with _db() as con:
@@ -728,6 +729,9 @@ class AlertMonitor:
         self.swing_strategies: list[str] = []
         self.reversal_tickers: list[str] = []
         self._last_rev_ts: float | None = None
+        self.pattern_on: bool = False
+        self._last_pat_ts: float | None = None
+        self.last_pattern_poll: str | None = None
         self.earnings_buffer: int = 3
         self.last_poll: str | None = None
         self.last_swing_poll: str | None = None
@@ -748,6 +752,7 @@ class AlertMonitor:
         swing_tickers: list[str] | None = None,
         earnings_buffer: int | None = None,
         reversal_tickers: list[str] | None = None,
+        pattern_on: bool | None = None,
         configure: tuple[str, ...] = ("zerodte", "swing"),
     ) -> dict:
         """Start (or reconfigure) the monitor.
@@ -764,6 +769,9 @@ class AlertMonitor:
                 if t.strip() and not (t.upper() in seen or seen.add(t.upper()))
             ]
             self._last_rev_ts = None  # scan immediately with the new list
+        if "pattern" in configure:
+            self.pattern_on = bool(pattern_on)
+            self._last_pat_ts = None  # evaluate immediately with the armed set
         if "zerodte" in configure:
             # An empty symbols list disables 0DTE alerts.
             self.symbols = [s.upper() for s in (symbols or []) if s.upper() in SYMBOLS]
@@ -831,6 +839,8 @@ class AlertMonitor:
             "swing_tickers": len(self.swing_tickers),
             "swing_strategies": self.swing_strategies,
             "reversal_tickers": self.reversal_tickers,
+            "pattern_on": self.pattern_on,
+            "last_pattern_poll": self.last_pattern_poll,
             "started_at": self.started_at,
             "last_poll": self.last_poll,
             "last_swing_poll": self.last_swing_poll,
@@ -911,6 +921,22 @@ class AlertMonitor:
                 except Exception as exc:
                     print(f"[alert] reversal tick error: {exc}")
                 self._last_rev_ts = time.time()
+            # Pattern watch (Pattern lab tab): once on start, then every 5 min
+            # while open. Fires when today's live conditions match an armed
+            # >win% pattern; tracks each to its +$/-$ barrier or the close.
+            if self.pattern_on and (
+                self._last_pat_ts is None
+                or (
+                    self._market_open(now)
+                    and time.time() - self._last_pat_ts >= PATTERN_POLL_SECONDS
+                )
+            ):
+                try:
+                    self._pattern_tick(now)
+                except Exception as exc:
+                    print(f"[alert] pattern tick error: {exc}")
+                self._last_pat_ts = time.time()
+                self.last_pattern_poll = now.isoformat(timespec="seconds")
             # End-of-day confirmation scan: intraday signals are provisional
             # (partial daily bar). One rescan on the completed bar confirms
             # which survived to the close and submits their paper orders.
@@ -954,6 +980,90 @@ class AlertMonitor:
                     f"REVERSAL ({ev['direction'].upper()}): {ev['ticker']} @ {ev['price']:.2f}",
                     ev["what"] + " — informational alert, no order placed",
                 )
+
+    def _pattern_tick(self, now: datetime) -> None:
+        """For each armed ticker, alert when today's live conditions match one
+        of THAT ticker's own >win% patterns, then walk each open pattern trade
+        to its +$/-$ barrier or the close.
+
+        Each ticker is matched only against the patterns from its own study
+        (arm() ties them together), so QQQ alerts fire off the QQQ deep dive
+        and AAPL off the AAPL one. Entries are deduped per (date, symbol,
+        pattern) by the alerts UNIQUE key. Alert-only: no paper order.
+        """
+        store = patterns.armed()
+        if not store:
+            return
+        today = now.strftime("%Y-%m-%d")
+        for tkr, cfg in store["tickers"].items():
+            target = float(cfg["target"])
+            snap = patterns.live_features(tkr)
+            if snap.get("ready"):
+                P = float(snap["price"])
+                for p in patterns.match_live(snap["features"], cfg["patterns"]):
+                    long = p["side"] == "long"
+                    tgt, stop = (P + target, P - target) if long else (P - target, P + target)
+                    planned = f"+${target:g} move ({p['win_pct']}% hist, ~{p['avg_mins'] or '?'} min)"
+                    with _db() as con:
+                        cur = con.execute(
+                            """INSERT OR IGNORE INTO alerts (kind, alert_time, date, symbol,
+                                strategy, seq, direction, entry_time, entry_price,
+                                stop_price, target_price, planned_exit, status)
+                                VALUES ('pattern',?,?,?,?,0,?,?,?,?,?,?,'open')""",
+                            (now.strftime("%H:%M:%S"), today, tkr, p["label"],
+                             "long" if long else "short", snap["tod"], P, stop, tgt, planned),
+                        )
+                    if cur.rowcount:
+                        _toast(
+                            f"PATTERN {p['side'].upper()} {p['win_pct']}%: {tkr} @ {P:.2f}",
+                            f"{p['label']} → target {tgt:.2f} / stop {stop:.2f} (informational)",
+                        )
+            self._settle_pattern_trades(tkr, now)
+
+    def _settle_pattern_trades(self, tkr: str, now: datetime) -> None:
+        today = now.strftime("%Y-%m-%d")
+        with _db() as con:
+            opens = [dict(r) for r in con.execute(
+                "SELECT * FROM alerts WHERE kind='pattern' AND status='open' "
+                "AND date=? AND symbol=?", (today, tkr),
+            )]
+        if not opens:
+            return
+        bars = marketdata.intraday(tkr, yf_symbol=tkr)
+        if bars.empty:
+            return
+        session_over = now.strftime("%H:%M") >= SESSION_END
+        for r in opens:
+            after = bars[bars.index.strftime("%H:%M") >= (r["entry_time"] or "09:30")]
+            if after.empty:
+                continue
+            long = r["direction"] == "long"
+            hi, lo = float(after["High"].max()), float(after["Low"].min())
+            hit_tgt = hi >= r["target_price"] if long else lo <= r["target_price"]
+            hit_stop = lo <= r["stop_price"] if long else hi >= r["stop_price"]
+            if hit_tgt and not hit_stop:
+                exit_price, reason = r["target_price"], "target"
+            elif hit_stop and not hit_tgt:
+                exit_price, reason = r["stop_price"], "stop"
+            elif hit_tgt and hit_stop:
+                # both barriers inside the polling window -- conservative: stop
+                exit_price, reason = r["stop_price"], "stop_ambig"
+            elif session_over:
+                exit_price, reason = float(after["Close"].iloc[-1]), "session_close"
+            else:
+                continue
+            entry = r["entry_price"]
+            pnl = (exit_price - entry) / entry * 100 if long else (entry - exit_price) / entry * 100
+            with _db() as con:
+                con.execute(
+                    "UPDATE alerts SET exit_time=?, exit_price=?, pnl_pct=?, "
+                    "exit_reason=?, status='closed' WHERE id=?",
+                    (now.strftime("%H:%M"), round(exit_price, 2), round(pnl, 3), reason, r["id"]),
+                )
+            _toast(
+                f"PATTERN EXIT ({reason}): {tkr} @ {exit_price:.2f}",
+                f"{r['strategy']} → {'+' if pnl >= 0 else ''}{pnl:.2f}%",
+            )
 
     def _swing_tick(self, now: datetime) -> None:
         strats = [SWING_STRATEGIES[k] for k in self.swing_strategies]

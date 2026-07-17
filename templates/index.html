@@ -5,48 +5,108 @@
 <title>Swing Trade Tracker</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; background: #0f1420; color: #e6e9f0; }
-h1 { margin-bottom: 0.2rem; }
-h3 { margin-top: 2rem; }
-.meta { color: #9aa3b5; margin-top: 0; }
-.tabs { display: flex; gap: 0.5rem; margin: 1.25rem 0; }
-.tab { background: #171f30; color: #9aa3b5; border: 1px solid #263042; border-radius: 8px 8px 0 0; padding: 10px 18px; cursor: pointer; font-size: 0.95rem; }
-.tab.active { background: #4f8ef7; color: #fff; border-color: #4f8ef7; }
-.card { background: #171f30; border-radius: 10px; padding: 1.25rem; }
-.controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+:root {
+  --bg: #0b101c; --card: #151c2c; --border: #232e44; --border-soft: #1d2740;
+  --text: #e8ecf4; --muted: #93a0b8; --accent: #4f8ef7;
+  --green: #38c793; --red: #e5534b; --amber: #f0b429;
+}
+* { box-sizing: border-box; }
+html { scrollbar-color: #2a3650 var(--bg); background: var(--bg); }
+body {
+  font-family: "Inter", -apple-system, "Segoe UI", Roboto, sans-serif;
+  margin: 0;
+  background: radial-gradient(1100px 500px at 15% -5%, #131b30 0%, var(--bg) 55%) fixed, var(--bg);
+  color: var(--text); line-height: 1.55; font-size: 15px;
+}
+/* Left sidebar navigation, locked to the viewport with position:fixed so it
+   NEVER scrolls out of view — even if a wide table forces a horizontal
+   scrollbar. (A sticky sidebar scrolls horizontally with the page; fixed
+   does not.) The content is vertical, so the full height goes to data. */
+.sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: 208px; z-index: 100;
+  padding: 1.3rem 0.9rem; background: #0d1322; border-right: 1px solid var(--border); overflow-y: auto; }
+.main { margin-left: 208px; padding: 1.4rem 2rem 4rem; }
+h1 { margin: 0 0 0.15rem; font-size: 1.12rem; font-weight: 800; letter-spacing: -0.01em; }
+h1::after { content: ""; display: inline-block; width: 0.42rem; height: 0.42rem; margin-left: 0.45rem;
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 10px var(--accent); vertical-align: 0.22rem; }
+.sidebar .meta { font-size: 0.72rem; line-height: 1.45; margin: 0 0 1.1rem; }
+h3 { margin-top: 2rem; font-size: 1.02rem; font-weight: 600; letter-spacing: 0.01em; }
+.meta { color: var(--muted); margin-top: 0; font-weight: 400; }
+.tabs { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.tab { background: transparent; color: var(--muted); border: none; border-left: 2px solid transparent;
+  border-radius: 7px; padding: 9px 12px; cursor: pointer; font-size: 0.92rem; font-weight: 500;
+  font-family: inherit; text-align: left; transition: color .15s, background .15s, border-color .15s; }
+.tab:hover { color: var(--text); background: rgba(79,142,247,0.07); }
+.tab.active { color: #fff; border-left-color: var(--accent);
+  background: linear-gradient(90deg, rgba(79,142,247,0.16), rgba(79,142,247,0.03)); }
+/* Narrow screens: sidebar becomes a top bar again */
+@media (max-width: 860px) {
+  .sidebar { position: static; height: auto; width: auto; bottom: auto;
+    border-right: none; border-bottom: 1px solid var(--border); }
+  .tabs { flex-direction: row; flex-wrap: wrap; }
+  .tab { border-left: none; border-bottom: 2px solid transparent; border-radius: 7px 7px 0 0; }
+  .tab.active { border-left: none; border-bottom-color: var(--accent); }
+  .main { margin-left: 0; padding: 1rem 1.25rem 3rem; }
+}
+.card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.4), 0 8px 24px -18px rgba(0,0,0,0.6); }
+/* auto-fit lets the control columns WRAP when space is tight instead of
+   forcing the page wider (a horizontal scrollbar was pushing content off). */
+.controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 1rem; }
 .field { display: flex; flex-direction: column; gap: 0.35rem; }
 .field.wide { grid-column: 1 / -1; }
-label { color: #9aa3b5; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
-select, input, textarea { background: #0f1420; color: #e6e9f0; border: 1px solid #263042; border-radius: 6px; padding: 8px 10px; font-size: 0.95rem; }
+label { color: var(--muted); font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.07em; }
+select, input, textarea { background: #0d1320; color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 11px; font-size: 0.93rem; font-family: inherit; transition: border-color .15s, box-shadow .15s; }
+select:focus, input:focus, textarea:focus { outline: none; border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(79,142,247,0.18); }
 .checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
-.check { color: #e6e9f0; font-size: 0.9rem; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4rem; }
-.actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
-button.run { background: #4f8ef7; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; }
-button.secondary { background: #263042; }
+.check { color: var(--text); font-size: 0.9rem; font-weight: 400; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4rem; }
+input[type="checkbox"] { accent-color: var(--accent); width: 0.95rem; height: 0.95rem; }
+.actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 0.9rem; flex-wrap: wrap; }
+button.run { background: var(--accent); color: #fff; border: none; border-radius: 8px; padding: 9px 18px;
+  font-size: 0.93rem; font-weight: 600; font-family: inherit; cursor: pointer; transition: filter .15s, background .15s; }
+button.run:hover { filter: brightness(1.12); }
+button.secondary { background: #212c42; color: #c7d0e0; border: 1px solid var(--border); font-weight: 500; }
+button.secondary:hover { background: #283552; filter: none; }
 button:disabled { opacity: 0.5; cursor: wait; }
-.status { color: #f0b429; font-size: 0.9rem; }
-table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
-th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid #263042; }
+.status { color: var(--amber); font-size: 0.9rem; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 12px; text-align: right; border-bottom: 1px solid var(--border-soft); }
 th:first-child, td:first-child { text-align: left; }
 td:first-child { font-weight: 600; }
-th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.05em; }
-.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; margin: 1.5rem 0; }
-.note { color: #9aa3b5; font-size: 0.85rem; }
-.warn { color: #f0b429; font-size: 0.85rem; }
+th { color: var(--muted); text-transform: uppercase; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.07em; }
+tbody tr { transition: background .12s; }
+tbody tr:hover { background: rgba(79,142,247,0.055); }
+.charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 2rem; margin: 1.5rem 0; }
+.note { color: var(--muted); font-size: 0.85rem; }
+.warn { color: var(--amber); font-size: 0.85rem; }
+details > summary { user-select: none; }
+details > summary:hover { color: var(--text); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: #2a3650; border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-track { background: transparent; }
 </style>
 </head>
 <body>
-<h1>Swing Trade Tracker</h1>
-<p class="meta">Multi-strategy backtesting and scanning with earnings exclusion</p>
-
-<div class="tabs">
-  <button class="tab active" data-tab="swingTab">Swing strategies</button>
-  <button class="tab" data-tab="zdteTab">0DTE intraday</button>
-  <button class="tab" data-tab="alertTab">Alerts / Trades</button>
-  <button class="tab" data-tab="bearTab">Bear strategy</button>
-  <button class="tab" data-tab="analyzerTab">Analyzer</button>
+<div class="sidebar">
+  <h1>Swing Trade Tracker</h1>
+  <p class="meta">Multi-strategy backtesting &amp; scanning with earnings exclusion</p>
+  <div class="tabs">
+    <button class="tab active" data-tab="swingTab">Swing strategies</button>
+    <button class="tab" data-tab="zdteTab">0DTE intraday</button>
+    <button class="tab" data-tab="alertTab">Alerts / Trades</button>
+    <button class="tab" data-tab="bearTab">Bear strategy</button>
+    <button class="tab" data-tab="analyzerTab">Analyzer</button>
+    <button class="tab" data-tab="patTab">Pattern lab</button>
+    <button class="tab" data-tab="miscTab">Misc</button>
+  </div>
 </div>
+
+<div class="main">
 
 <!-- ============ SWING TAB ============ -->
 <div id="swingTab">
@@ -214,6 +274,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
       <option value="">All alerts</option>
       <option value="0dte">0DTE only</option>
       <option value="swing">Swing only</option>
+      <option value="pattern">Pattern only</option>
       <option value="reversal">Reversals only</option>
     </select>
   </div>
@@ -233,7 +294,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
   <thead><tr><th>Symbol</th><th>Closed trades</th><th>Wins</th><th>Total P/L %</th><th>Avg P/L %</th><th>Paper $ P/L</th><th>Open / signals</th></tr></thead>
   <tbody id="ahSumBody"><tr><td colspan="7">No closed trades in the selected range.</td></tr></tbody>
 </table>
-<p class="note">Closed trades only, from the filters above (set From = To = one date for a single-day view, or click <b>Today</b>). <b>Total P/L %</b> sums per-trade returns (trades are roughly equal-sized, so this tracks the strategy). <b>Paper $ P/L</b> is exact for alerts that placed an Alpaca paper order (shares &times; entry &times; P/L%); alerts without a paper order show &mdash; and are excluded from the $ total. Reversal alerts are informational and never counted.</p>
+<p class="note">Closed trades only, from the filters above (set From = To = one date for a single-day view, or click <b>Today</b>). Click a ticker row (or its <b>+</b>) to expand its per-strategy breakdown. <b>Total P/L %</b> sums per-trade returns (trades are roughly equal-sized, so this tracks the strategy). <b>Paper $ P/L</b> is exact for alerts that placed an Alpaca paper order (shares &times; entry &times; P/L%); alerts without a paper order show &mdash; and are excluded from the $ total. Reversal alerts are informational and never counted.</p>
 
 <h3>Alert history</h3>
 <table>
@@ -379,8 +440,264 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 </div>
 </div>
 
+<!-- ============ PATTERN LAB TAB ============ -->
+<div id="patTab" style="display:none">
+<div class="card controls">
+  <div class="field">
+    <label for="patTicker">Ticker</label>
+    <input type="text" id="patTicker" value="QQQ" style="text-transform:uppercase">
+  </div>
+  <div class="field">
+    <label for="patTarget">Target move ($)</label>
+    <input type="number" id="patTarget" value="1.00" step="0.25" min="0.25">
+  </div>
+  <div class="field">
+    <label for="patLookback">Lookback</label>
+    <select id="patLookback">
+      <option value="180">~6 months</option>
+      <option value="365" selected>~1 year</option>
+      <option value="730">~2 years</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="patInterval">Decision points</label>
+    <select id="patInterval">
+      <option value="15">every 15 min</option>
+      <option value="30" selected>every 30 min</option>
+      <option value="60">every 60 min</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="patMinN">Min samples</label>
+    <input type="number" id="patMinN" value="40" min="15" step="5">
+  </div>
+  <div class="field" style="justify-content:flex-end">
+    <label class="note" style="cursor:pointer"><input type="checkbox" id="patForce"> force re-run (ignore cache)</label>
+  </div>
+  <div class="actions">
+    <button class="run" id="patBtn">Run deep dive</button>
+    <span class="status" id="patStatus"></span>
+  </div>
+  <div class="field wide">
+    <p class="note" style="margin:0 0 0.3rem">Deep dives are <b>cached for 30 days</b> per ticker + settings — re-running with the same settings returns the saved study instantly. Tick <b>force re-run</b> to recompute against the latest sessions.</p>
+    <details>
+      <summary class="note" style="cursor:pointer">How this works &mdash; the question being answered, the conditions tested, and the honesty checks</summary>
+      <p class="note"><b>The question:</b> from a given moment in the day, will the price touch <b>current + $target before current &minus; $target</b> (a long day-trade wins) or the reverse (a short wins) &mdash; any time before the same session's close? Every 15/30/60 minutes from 10:00 to 14:30 ET is treated as such a decision point, and each one is labeled with what actually happened next (first barrier touched, or <i>neither</i> by the close; when both barriers fall inside one 5-minute bar it counts as a win for <i>neither</i> side &mdash; conservative).</p>
+      <p class="note"><b>The conditions</b> (all measurable at that moment, no look-ahead): <b>tod</b> time of day &middot; <b>gap</b> overnight gap vs prior close (&plusmn;0.1/0.3%) &middot; <b>or30</b> above/inside/below the first-30-min range &middot; <b>vwap_side</b> above/below session VWAP (well = &gt;0.15% away) &middot; <b>vwap_slope</b> VWAP direction over the last 30 min &middot; <b>rsi</b> intraday RSI(14) bucket &middot; <b>pd_pos</b> position vs prior day's high/low/midpoint &middot; <b>dow</b> day of week &middot; <b>first30</b> first-half-hour direction &middot; <b>yday</b> prior day up or down &middot; <b>range_used</b> today's range so far vs the 14-day average daily range &middot; <b>mom30</b> last-30-min momentum.</p>
+      <p class="note"><b>The mining:</b> every single condition, pair, and triple is tested. Days are split ~70/30 into an older <i>train</i> and a recent <i>test</i> period, and a pattern is ranked by its <b>worst half</b> &mdash; it must beat the baseline in <i>both</i> periods to appear at all. A more complex pattern is dropped when a simpler one inside it scores about as well.</p>
+      <p class="note"><b>Excluded days:</b> FOMC decision days (2023&ndash;2026 built in), NFP first-Fridays, half sessions, plus anything you add to <code>event_days.json</code> (paste CPI dates there &mdash; they are not built in). <b>Caveats:</b> decision points within one day overlap, so judge a pattern by its <i>Days</i> column, not just samples; and with ~300 combos tested, some look good by luck &mdash; the train/test filter reduces this but cannot eliminate it. A pattern is a starting hypothesis to forward-test, not a guarantee. Educational use only; not financial advice.</p>
+    </details>
+  </div>
+</div>
+
+<div id="patResults" style="display:none">
+<div class="card"><p class="note" id="patSummary" style="margin:0"></p></div>
+
+<h3>Long patterns &mdash; price touched +$T before &minus;$T <span class="meta" id="patLongMeta"></span></h3>
+<table>
+  <thead><tr><th>#</th><th>Conditions</th><th>Samples</th><th>Days</th><th>Win %</th><th>Train %</th><th>Test %</th><th>Edge vs base</th><th>Avg mins to hit</th></tr></thead>
+  <tbody id="patLongBody"></tbody>
+</table>
+
+<h3>Short patterns &mdash; price touched &minus;$T before +$T <span class="meta" id="patShortMeta"></span></h3>
+<table>
+  <thead><tr><th>#</th><th>Conditions</th><th>Samples</th><th>Days</th><th>Win %</th><th>Train %</th><th>Test %</th><th>Edge vs base</th><th>Avg mins to hit</th></tr></thead>
+  <tbody id="patShortBody"></tbody>
+</table>
+
+<details style="margin-top:1rem">
+  <summary class="note" style="cursor:pointer">Single-condition breakdown &mdash; every condition on its own</summary>
+  <table>
+    <thead><tr><th>Condition</th><th>Samples</th><th>Days</th><th>+$ first</th><th>&minus;$ first</th><th>Neither by close</th></tr></thead>
+    <tbody id="patMargBody"></tbody>
+  </table>
+</details>
+<p class="note"><b>Reading the tables:</b> <b>Win %</b> is how often the favorable barrier was touched first over the whole period; <b>Train/Test</b> show the same rate in the older vs recent split &mdash; a real edge holds up in both. <b>Edge vs base</b> is percentage points above the do-this-at-any-random-moment baseline. <b>Avg mins to hit</b> says how long the winning move took &mdash; useful for sizing patience and stops.</p>
+</div>
+
+<div class="card" style="margin-top:1.25rem">
+  <h3 style="margin-top:0">Live pattern alerts <span class="meta">&mdash; arm a ticker's study and get a desktop toast when today's conditions match</span></h3>
+  <p class="note" id="patStatusLine">Monitor not running.</p>
+  <div class="controls" style="padding:0;border:none;background:none;margin:0">
+    <div class="field">
+      <label for="patAlertTicker">Ticker</label>
+      <input type="text" id="patAlertTicker" value="QQQ" style="text-transform:uppercase">
+    </div>
+    <div class="field">
+      <label for="patAlertTarget">Target move ($)</label>
+      <input type="number" id="patAlertTarget" value="1.00" step="0.25" min="0.25">
+    </div>
+    <div class="field">
+      <label for="patAlertLookback">Lookback</label>
+      <select id="patAlertLookback">
+        <option value="180">~6 months</option>
+        <option value="365" selected>~1 year</option>
+        <option value="730">~2 years</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="patAlertInterval">Decision points</label>
+      <select id="patAlertInterval">
+        <option value="15">every 15 min</option>
+        <option value="30" selected>every 30 min</option>
+        <option value="60">every 60 min</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="patAlertMinN">Min samples</label>
+      <input type="number" id="patAlertMinN" value="40" min="15" step="5">
+    </div>
+    <div class="field">
+      <label for="patMinWin">Arm win% &ge;</label>
+      <input type="number" id="patMinWin" value="70" min="50" max="100" step="1">
+    </div>
+    <div class="actions">
+      <button class="run" id="patArmBtn">Arm &amp; start alerts</button>
+      <button class="run secondary" id="patLiveBtn">Check live now</button>
+      <button class="run secondary" id="patDisarmBtn">Stop all alerts</button>
+      <span class="status" id="patArmStatus"></span>
+    </div>
+  </div>
+  <p class="note" style="margin-top:0.5rem"><b>Separate from the deep dive above.</b> Arming looks up the <b>cached study</b> for these exact settings (ticker + target + lookback + decision points + min samples) and saves every pattern at or above your win% cutoff &mdash; it does <b>not</b> re-run a study that already exists (compute it once via <b>Run deep dive</b>, or arming will compute &amp; cache it the first time). The monitor then checks <b>each armed ticker</b> against <b>its own</b> patterns every 5 minutes in market hours, fires a toast, and logs to <b>Alerts / Trades</b> (kind <b>Pattern</b>). Arm several tickers &mdash; all are watched. Alert-only; no paper order.</p>
+  <p class="note" style="margin:0.3rem 0 0"><b>One armed study per ticker:</b> re-arming a ticker (e.g. the same ticker at a different lookback) <b>replaces</b> its previously armed set &mdash; the monitor never mixes two studies of the same ticker, so a live condition can't double-alert from both. All its cached studies stay on disk, so switching back is instant.</p>
+  <p class="note" id="patCacheLine" style="margin:0.3rem 0 0"></p>
+  <div id="patArmedBox"></div>
+</div>
+</div>
+
+<!-- ============ MISC TAB ============ -->
+<div id="miscTab" style="display:none">
+<div style="margin-bottom:0.9rem;display:flex;gap:0.5rem;flex-wrap:wrap">
+  <button class="run miscSub" data-view="miscScanView">Scan &amp; analyze</button>
+  <button class="run secondary miscSub" data-view="miscTrackView">Daily tracker <span id="miscTrackCount"></span></button>
+</div>
+
+<div id="miscScanView">
+<div class="card controls">
+  <div class="field">
+    <label for="miscUniverse">Scan a watchlist</label>
+    <select id="miscUniverse">
+      {% for u in universes %}
+      <option value="{{ u.key }}">{{ u.label }} ({{ u.count }})</option>
+      {% endfor %}
+      <option value="custom">Custom list</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="miscCustom">Custom / extra tickers</label>
+    <input type="text" id="miscCustom" placeholder="e.g. AMZN, NVDA">
+  </div>
+  <div class="field">
+    <label for="miscLimit">Max tickers (0 = all)</label>
+    <input type="number" id="miscLimit" value="0" min="0">
+  </div>
+  <div class="field" style="justify-content:flex-end">
+    <label class="note" style="cursor:pointer"><input type="checkbox" id="miscOnlyDiv" checked> only divergences</label>
+  </div>
+  <div class="actions">
+    <button class="run" id="miscScanBtn">Scan for divergences</button>
+    <span class="status" id="miscScanStatus"></span>
+  </div>
+</div>
+
+<div id="miscScanResults" style="display:none;margin-bottom:1rem">
+  <h3 style="display:flex;align-items:center;gap:0.8rem;flex-wrap:wrap">Divergence scan <span class="meta" id="miscScanMeta"></span>
+    <button class="run secondary" id="miscAddBtn" style="padding:0.2rem 0.8rem;font-size:0.85rem">Add selected to tracker</button>
+    <span class="status" id="miscAddStatus"></span>
+  </h3>
+  <table>
+    <thead><tr><th><input type="checkbox" id="miscPickAll" title="select all"></th><th>#</th><th>Ticker</th><th>Score</th><th>Signal</th><th>Dir</th><th>Type</th><th>Price</th><th>MACD</th><th>Where price sits</th></tr></thead>
+    <tbody id="miscScanBody"></tbody>
+  </table>
+  <p class="note"><b>Tick rows and “Add selected to tracker”</b> to watch them daily, or <b>click a row</b> to open its full multi-timeframe breakdown below. <b>Score</b> is &minus;100 (strong sell) … +100 (strong buy), daily-based; the detail view adds the 4H/15M stack. <b>Type</b>: <i>regular</i> = reversal, <i>hidden</i> = continuation. Hover a row for the divergence sentence. Educational use only; not financial advice.</p>
+</div>
+
+<h3 style="margin-bottom:0.4rem">Single-ticker deep dive</h3>
+<div class="card controls">
+  <div class="field">
+    <label for="miscTicker">Ticker</label>
+    <input type="text" id="miscTicker" placeholder="e.g. AMZN" style="text-transform:uppercase">
+  </div>
+  <div class="actions">
+    <button class="run" id="miscBtn">Divergence play &mdash; does it exist?</button>
+    <span class="status" id="miscStatus"></span>
+  </div>
+  <div class="field wide">
+    <details>
+      <summary class="note" style="cursor:pointer">What this checks &mdash; the "divergences never lie" setup, drawn on your chart</summary>
+      <p class="note">The classic swing-analyst play: after a decline from a swing high (<b>HH</b>) through a lower high (<b>LH</b>) to a low (<b>LL</b>), price prints a lower low while <b>RSI prints a higher low</b> &mdash; bullish divergence, momentum turning up before price. The bounce is then measured with a Fibonacci retracement of the LL&rarr;LH swing: <b>EQ (50%)</b> and the <b>golden pocket (0.618&ndash;0.786)</b> are the decision zones, with LH and HH the targets above. This tab detects the structure automatically on the daily chart, checks the divergence (regular <i>and</i> hidden), confirms with <b>MACD</b>, then draws every level, the golden-pocket band, the swing markers and the divergence line &mdash; and tells you plainly whether the setup exists, is confirmed, or has failed. The bearish mirror is detected when the recent extreme is a high. Educational use only; not financial advice.</p>
+    </details>
+  </div>
+</div>
+
+<div id="miscResults" style="display:none">
+  <div class="card" id="miscVerdict" style="margin-bottom:1rem"></div>
+  <div class="card" id="miscMtf" style="margin-bottom:1rem"></div>
+  <div class="card" style="padding:0.5rem">
+    <div style="margin-bottom:0.4rem;display:flex;gap:0.4rem;align-items:center;flex-wrap:wrap">
+      <span class="note">View the picture:</span>
+      <button class="run secondary miscTf" data-tf="1d" style="padding:0.2rem 0.7rem">Daily — bigger</button>
+      <button class="run secondary miscTf" data-tf="4h" style="padding:0.2rem 0.7rem">4H — smaller</button>
+      <button class="run secondary miscTf" data-tf="15m" style="padding:0.2rem 0.7rem">15M — timing</button>
+      <span class="note" id="miscChartMeta" style="margin-left:0.4rem"></span>
+    </div>
+    <div id="miscC" style="height:440px"></div>
+    <div id="miscR" style="height:200px;border-top:1px solid #1f2733"></div>
+    <p class="note" id="miscChartNote" style="margin:0.3rem 0 0"></p>
+  </div>
+  <div class="charts" style="margin-top:1rem">
+    <div class="card">
+      <h3 style="margin-top:0">Structure &amp; levels</h3>
+      <table><tbody id="miscLevelBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">The read</h3>
+      <ul id="miscReasons" style="margin:0;padding-left:1.1rem;line-height:1.7"></ul>
+    </div>
+  </div>
+  <details class="card" style="margin-top:1rem" open>
+    <summary style="cursor:pointer;font-weight:600">📚 Coach me: divergences on the smaller vs bigger picture</summary>
+    <div class="note" style="line-height:1.7;margin-top:0.6rem">
+      <p><b>The one idea:</b> a divergence is a disagreement between <i>price</i> and <i>momentum</i> (RSI). Price makes a new low, but RSI makes a higher low — sellers pushed price lower but with less force. That loss of force shows up <b>first on the smaller (lower) timeframe</b>, because a lower timeframe reacts to momentum sooner. You then <b>read it on the bigger (higher) timeframe</b> to decide whether it actually matters.</p>
+      <p><b>Smaller picture (4H / 15M) = the trigger — WHEN.</b> This is where a divergence prints early. It is sensitive, so it fires often — most of those are noise.</p>
+      <p><b>Bigger picture (Daily) = the context — WHERE.</b> The daily sets the dominant trend and the key levels (the swing structure, EQ, the golden pocket). It answers: is this a spot where a turn should happen?</p>
+      <p><b>The rule that separates signal from noise:</b> only trust a smaller-picture divergence when it <b>agrees with the bigger picture</b> — same direction as the higher-timeframe setup, and ideally firing <b>at a bigger-picture level</b> (EQ or the golden pocket). A smaller-picture bullish divergence <i>inside</i> a bigger-picture uptrend, right at support, is the high-conviction "stack." The same divergence against the bigger trend, in no-man's-land, is just a pullback — ignore it.</p>
+      <p><b>Two flavors (this tab labels which):</b> <b>regular</b> divergence warns of a <i>reversal</i> (price lower low, RSI higher low → down-move exhausting); <b>hidden</b> divergence signals <i>continuation</i> (price higher low, RSI lower low → trend resuming after a dip). Hidden divergences are the ones that "agree with the bigger picture" by construction.</p>
+      <p><b>How to use this tab to learn it:</b> read the <b>Timeframe stack</b> box first — it tells you whether the pictures agree. Then flip the chart between <b>Daily → 4H → 15M</b> and watch how the same golden-pocket price band (drawn on every timeframe) lines up with where each timeframe's cyan divergence line sits. When all three point the same way at that band, that is the setup. When they fight, sit out.</p>
+    </div>
+  </details>
+</div>
+</div><!-- /miscScanView -->
+
+<div id="miscTrackView" style="display:none">
+  <div class="card">
+    <h3 style="margin-top:0">Daily tracker <span class="meta">— candidates you added from the scan, watched since the day you added them</span></h3>
+    <p class="note">Select rows in the scan (<b>Scan &amp; analyze</b> sub-tab) and click <b>Add selected to tracker</b>. Here you see each pick's price the day it was added vs. now. <b>P/L</b> is signed to the thesis (a bearish pick gains when price falls). Click a ticker for its date-wise price trend. Archive with a note when a trade plays out, or delete to drop it.</p>
+    <table>
+      <thead><tr><th>Ticker</th><th>Added</th><th>Dir</th><th>Score</th><th>Price added</th><th>Price now</th><th>P/L</th><th>Note</th><th></th></tr></thead>
+      <tbody id="miscTrackBody"><tr><td colspan="9">Nothing tracked yet.</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card" id="miscTrackChartCard" style="display:none;margin-top:1rem;padding:0.5rem">
+    <div style="margin-bottom:0.3rem"><span class="note" id="miscTrackChartMeta"></span></div>
+    <div id="miscTrackChart" style="height:340px"></div>
+  </div>
+
+  <details class="card" style="margin-top:1rem" id="miscArchiveCard">
+    <summary style="cursor:pointer;font-weight:600">Archived <span id="miscArchiveCount" class="note"></span></summary>
+    <table style="margin-top:0.6rem">
+      <thead><tr><th>Ticker</th><th>Added</th><th>Archived</th><th>Price added</th><th>Price archived</th><th>Note</th><th></th></tr></thead>
+      <tbody id="miscArchiveBody"></tbody>
+    </table>
+  </details>
+</div>
+</div>
+</div><!-- /main -->
+
 <script>
 const $ = (id) => document.getElementById(id);
+const KIND_LABEL = { swing: "Swing", "0dte": "0DTE", pattern: "Pattern", reversal: "Reversal" };
 let wrChart, exChart, zwrChart, zexChart;
 
 // --- Tabs ---
@@ -388,12 +705,14 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
     if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); loadBroker(); }
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
+    if (btn.dataset.tab === "patTab") { refreshAlertStatus(); refreshArmed(); refreshCacheLine(); }
+    if (btn.dataset.tab === "miscTab" && miscChart) miscChart.main.timeScale().fitContent();
   })
 );
 
@@ -638,14 +957,17 @@ function renderAlertStatus(s) {
       ? `swing: ${s.swing_tickers} tickers, ${s.swing_strategies.length} strategies` +
         (s.last_swing_poll ? ` (last scan ${s.last_swing_poll})` : "")
       : "swing alerts off";
+    const pat = s.pattern_on
+      ? `pattern: ON${s.last_pattern_poll ? ` (last check ${s.last_pattern_poll})` : ""}`
+      : "pattern alerts off";
     html =
       `<span style="color:#38c793">&#9679; Monitor running</span> since ${s.started_at || "?"} ` +
-      `&mdash; ${zdte} &mdash; ${swing} &mdash; market ${s.market_open ? "OPEN" : "closed"} ` +
+      `&mdash; ${zdte} &mdash; ${swing} &mdash; ${pat} &mdash; market ${s.market_open ? "OPEN" : "closed"} ` +
       `(${s.now_et})${s.last_poll ? ` &mdash; last 0DTE poll ${s.last_poll}` : ""}`;
   } else {
     html = `<span style="color:#e5534b">&#9679; Monitor not running</span> (${s.now_et})`;
   }
-  for (const id of ["zStatusLine", "swStatusLine", "bStatusLine", "ahMonLine"]) {
+  for (const id of ["zStatusLine", "swStatusLine", "bStatusLine", "ahMonLine", "patStatusLine"]) {
     const el = $(id);
     if (el) el.innerHTML = html;
   }
@@ -659,7 +981,7 @@ async function refreshAlertStatus() {
 }
 setInterval(() => {
   if ($("alertTab").style.display !== "none" || $("swingTab").style.display !== "none" ||
-      $("zdteTab").style.display !== "none") refreshAlertStatus();
+      $("zdteTab").style.display !== "none" || $("patTab").style.display !== "none") refreshAlertStatus();
 }, 15000);
 refreshAlertStatus(); // initial load (swing tab is visible first)
 
@@ -798,7 +1120,7 @@ async function loadAlertHistory() {
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td>${a.date}</td><td>${a.alert_time}</td>` +
-        `<td>${a.kind === "swing" ? "Swing" : "0DTE"}</td><td>${a.symbol}</td>` +
+        `<td>${KIND_LABEL[a.kind] || a.kind}</td><td>${a.symbol}</td>` +
         `<td>${a.strategy_label}</td><td>${(a.seq || 0) + 1}</td><td>${a.direction}</td>` +
         `<td>${a.entry_time || "&mdash;"}</td><td>${fmt(a.entry_price)}</td>` +
         `<td>${fmt(a.stop_price)}</td>` +
@@ -821,14 +1143,12 @@ $("ahTodayBtn").addEventListener("click", () => {
   loadAlertHistory();
 });
 
-// P/L rollup of the filtered alerts: per-ticker rows + a totals row.
-// Percentages sum per-trade returns; dollars are exact where a paper order
-// was placed (qty x entry x P/L%). Reversal alerts are informational only.
+// P/L rollup of the filtered alerts: per-ticker rows (expandable to per-strategy
+// sub-rows) + a totals row. Percentages sum per-trade returns; dollars are exact
+// where a paper order was placed (qty x entry x P/L%). Reversal alerts skipped.
 function renderAlertSummary(alerts) {
-  const by = {};
-  for (const a of alerts) {
-    if (a.kind === "reversal") continue;
-    const b = by[a.symbol] || (by[a.symbol] = { closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 });
+  const blank = () => ({ closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 });
+  const accum = (b, a) => {
     if (a.status === "closed" && a.pnl_pct !== null) {
       b.closed++;
       if (a.pnl_pct > 0) b.wins++;
@@ -840,33 +1160,577 @@ function renderAlertSummary(alerts) {
     } else {
       b.open++;
     }
+  };
+  const by = {};
+  for (const a of alerts) {
+    if (a.kind === "reversal") continue;
+    const t = by[a.symbol] || (by[a.symbol] = { tot: blank(), strats: {} });
+    const label = a.strategy_label || a.strategy || "—";
+    const s = t.strats[label] || (t.strats[label] = blank());
+    accum(t.tot, a);
+    accum(s, a);
   }
   $("ahSumMeta").textContent =
     $("ahStart").value === $("ahEnd").value ? `(${$("ahStart").value})` : `(${$("ahStart").value} → ${$("ahEnd").value})`;
   const body = $("ahSumBody");
-  const rows = Object.entries(by).filter(([, b]) => b.closed || b.open);
+  const rows = Object.entries(by).filter(([, t]) => t.tot.closed || t.tot.open);
   if (!rows.length) {
     body.innerHTML = `<tr><td colspan="7">No trades in the selected range.</td></tr>`;
     return;
   }
-  rows.sort((x, y) => y[1].pnl - x[1].pnl);
+  rows.sort((x, y) => y[1].tot.pnl - x[1].tot.pnl);
   const pct = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`;
   const usd = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}</span>`;
-  const tot = { closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 };
-  body.innerHTML = rows.map(([sym, b]) => {
+  // The five stat cells shared by ticker rows, strategy sub-rows and the total.
+  const cells = (b, bold) => {
+    const w = (s) => (bold ? `<b>${s}</b>` : s);
+    return `<td>${w(b.closed)}</td>` +
+      `<td>${w(b.closed ? `${b.wins}/${b.closed}` : "&mdash;")}</td>` +
+      `<td>${w(b.closed ? pct(b.pnl) : "&mdash;")}</td>` +
+      `<td>${w(b.closed ? pct(b.pnl / b.closed) : "&mdash;")}</td>` +
+      `<td>${w(b.hasD ? usd(b.dollars) : "&mdash;")}</td><td>${w(b.open || "&mdash;")}</td>`;
+  };
+  const tot = blank();
+  const html = rows.map(([sym, t]) => {
+    const b = t.tot;
     tot.closed += b.closed; tot.wins += b.wins; tot.pnl += b.pnl; tot.open += b.open;
     if (b.hasD) { tot.dollars += b.dollars; tot.hasD = true; }
-    return `<tr><td><b>${sym}</b></td><td>${b.closed}</td>` +
-      `<td>${b.closed ? `${b.wins}/${b.closed}` : "&mdash;"}</td>` +
-      `<td>${b.closed ? pct(b.pnl) : "&mdash;"}</td>` +
-      `<td>${b.closed ? pct(b.pnl / b.closed) : "&mdash;"}</td>` +
-      `<td>${b.hasD ? usd(b.dollars) : "&mdash;"}</td><td>${b.open || "&mdash;"}</td></tr>`;
-  }).join("") +
-    `<tr style="border-top:2px solid #2a3444"><td><b>TOTAL</b></td><td><b>${tot.closed}</b></td>` +
-    `<td><b>${tot.closed ? `${tot.wins}/${tot.closed}` : "&mdash;"}</b></td>` +
-    `<td><b>${tot.closed ? pct(tot.pnl) : "&mdash;"}</b></td>` +
-    `<td><b>${tot.closed ? pct(tot.pnl / tot.closed) : "&mdash;"}</b></td>` +
-    `<td><b>${tot.hasD ? usd(tot.dollars) : "&mdash;"}</b></td><td><b>${tot.open || "&mdash;"}</b></td></tr>`;
+    const strats = Object.entries(t.strats).filter(([, s]) => s.closed || s.open)
+      .sort((x, y) => y[1].pnl - x[1].pnl);
+    const parent =
+      `<tr class="sum-parent" data-sym="${sym}" style="cursor:pointer">` +
+      `<td><span class="sum-toggle" style="display:inline-block;width:1.1em;color:#7c8aa5">+</span><b>${sym}</b></td>` +
+      cells(b, false) + `</tr>`;
+    const kids = strats.map(([label, s]) =>
+      `<tr class="sum-child sum-child-${sym}" style="display:none;background:#141b26">` +
+      `<td style="padding-left:1.8em;color:#9aa3b5">${label}</td>` +
+      cells(s, false) + `</tr>`).join("");
+    return parent + kids;
+  }).join("");
+  body.innerHTML = html +
+    `<tr style="border-top:2px solid #2a3444"><td><b>TOTAL</b></td>` + cells(tot, true) + `</tr>`;
+}
+
+// Expand/collapse a ticker's per-strategy breakdown (event delegation).
+$("ahSumBody").addEventListener("click", (e) => {
+  const row = e.target.closest(".sum-parent");
+  if (!row) return;
+  const sym = row.dataset.sym;
+  const kids = document.querySelectorAll(".sum-child-" + CSS.escape(sym));
+  const open = kids.length && kids[0].style.display !== "none";
+  kids.forEach((k) => { k.style.display = open ? "none" : "table-row"; });
+  const tog = row.querySelector(".sum-toggle");
+  if (tog) tog.textContent = open ? "+" : "−";
+});
+
+// ================= PATTERN LAB TAB =================
+$("patBtn").addEventListener("click", async () => {
+  const body = {
+    ticker: $("patTicker").value.trim().toUpperCase() || "QQQ",
+    target: +$("patTarget").value || 1.0,
+    lookback_days: +$("patLookback").value,
+    interval_min: +$("patInterval").value,
+    min_support: +$("patMinN").value || 40,
+    force: $("patForce").checked,
+  };
+  const d = await callApi("/api/patterns/run", body, $("patStatus"), [$("patBtn")]);
+  if (d) { renderPatterns(d); refreshCacheLine(); }
+});
+
+function renderPatterns(d) {
+  $("patResults").style.display = "block";
+  const ex = Object.entries(d.excluded || {}).map(([k, v]) => `${k}: ${v}`).join(", ") || "none";
+  const b = d.baseline;
+  const cache = d.cached
+    ? `<span style="color:#f0b429">cached study from ${d.computed_at} (${d.cache_age_days}d old) — tick “force re-run” for the latest</span>`
+    : `<span style="color:#38c793">freshly computed ${d.computed_at} and cached for 30 days</span>`;
+  $("patSummary").innerHTML =
+    `${cache}<br>` +
+    `<b>${d.ticker}</b> &middot; barriers &plusmn;$${d.target.toFixed(2)} &middot; ${d.date_range[0]} &rarr; ${d.date_range[1]} &middot; ` +
+    `<b>${d.days_used}</b> sessions used &middot; excluded &mdash; ${ex} &middot; <b>${d.rows}</b> decision points &middot; data: ${d.source}<br>` +
+    `<b>Baseline</b> (any random decision point): +$ first <b>${b.up_pct}%</b> &middot; &minus;$ first <b>${b.dn_pct}%</b> &middot; ` +
+    `neither by close ${b.none_pct}% &middot; both-in-one-bar ${b.ambig_pct}%<br>` +
+    `Consistency split: train &le; ${d.split_date} (${d.train_days} days) / test after (${d.test_days} days) &mdash; every pattern below beat the baseline in <b>both</b>.` +
+    (d.source !== "alpaca"
+      ? `<br><b style="color:#f0b429">&#9888; yfinance fallback: only ~60 days of 5-minute history. Add Alpaca keys (alpaca.json) for 1&ndash;2 years of data.</b>` : "");
+  const pc = (v) => `<span style="color:${v >= 55 ? "#38c793" : v < 45 ? "#e5534b" : "#c7d0e0"}">${v}%</span>`;
+  const fill = (bodyId, metaId, rows) => {
+    $(metaId).textContent = rows.length
+      ? `(${d.ticker} ±$${d.target.toFixed(2)} — this study's top ${rows.length})` : `(${d.ticker})`;
+    $(bodyId).innerHTML = rows.length
+      ? rows.map((p, i) =>
+          `<tr><td>${i + 1}</td><td>${p.conds}</td><td>${p.n}</td><td>${p.days}</td>` +
+          `<td><b>${pc(p.pct)}</b></td><td>${pc(p.train_pct)}</td><td>${pc(p.test_pct)}</td>` +
+          `<td>+${p.lift} pp</td><td>${p.avg_mins === null ? "&mdash;" : p.avg_mins}</td></tr>`).join("")
+      : `<tr><td colspan="9">Nothing beat the baseline consistently at this sample threshold &mdash; lower <b>Min samples</b>, widen the lookback, or use 15-min decision points.</td></tr>`;
+  };
+  fill("patLongBody", "patLongMeta", d.long_patterns);
+  fill("patShortBody", "patShortMeta", d.short_patterns);
+  $("patMargBody").innerHTML = d.marginals.map((m) =>
+    `<tr><td>${m.cond}</td><td>${m.n}</td><td>${m.days}</td><td>${pc(m.up_pct)}</td><td>${pc(m.dn_pct)}</td><td>${m.none_pct}%</td></tr>`).join("");
+}
+
+// --- Live pattern alerts: its OWN ticker/settings, separate from the deep
+// dive. Arm looks up (or builds once) the cached study for these settings. ---
+function patAlertParams() {
+  return {
+    ticker: $("patAlertTicker").value.trim().toUpperCase() || "QQQ",
+    target: +$("patAlertTarget").value || 1.0,
+    lookback_days: +$("patAlertLookback").value,
+    interval_min: +$("patAlertInterval").value,
+    min_support: +$("patAlertMinN").value || 40,
+  };
+}
+
+async function refreshCacheLine() {
+  try {
+    const d = await (await fetch("/api/patterns/cache")).json();
+    const s = d.studies || [];
+    $("patCacheLine").innerHTML = s.length
+      ? "Cached studies ready to arm instantly: " + s.map((x) =>
+          `<b>${x.ticker}</b> $${x.target}/${x.lookback_days}d/${x.interval_min}m` +
+          `<span class="note"> (${x.age_days}d)</span>`).join(" &middot; ")
+      : `<span class="note">No cached studies yet — run a deep dive (or arm) to build one.</span>`;
+  } catch (e) { /* ignore */ }
+}
+
+$("patArmBtn").addEventListener("click", async () => {
+  const body = { ...patAlertParams(), min_win: +$("patMinWin").value || 70 };
+  const cfg = await callApi("/api/patterns/arm", body, $("patArmStatus"),
+    [$("patArmBtn"), $("patDisarmBtn")]);
+  if (!cfg) return;
+  const src = cfg.study_from_cache ? `cached study from ${cfg.study_computed_at}` : `newly computed study`;
+  if (!cfg.patterns.length) {
+    $("patArmStatus").textContent =
+      `No ${cfg.ticker} patterns at win% ≥ ${body.min_win} (${src}). Lower the cutoff or widen the study.`;
+    refreshArmed(); refreshCacheLine();
+    return;
+  }
+  // Start (or reconfigure) only the pattern channel; other channels untouched.
+  await fetch("/api/alerts/start", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ configure: ["pattern"], pattern_on: true }),
+  });
+  const repl = cfg.replaced_previous ? ` (replaced ${cfg.ticker}'s previously armed study)` : "";
+  $("patArmStatus").textContent = `Armed ${cfg.patterns.length} ${cfg.ticker} patterns from its ${src}${repl} — monitor watching it live.`;
+  refreshAlertStatus();
+  refreshArmed(); refreshCacheLine();
+});
+
+$("patDisarmBtn").addEventListener("click", async () => {
+  await fetch("/api/patterns/disarm", { method: "POST" });  // no ticker => disarm all
+  await fetch("/api/alerts/start", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ configure: ["pattern"], pattern_on: false }),
+  });
+  $("patArmStatus").textContent = "All pattern alerts stopped and disarmed.";
+  refreshAlertStatus();
+  refreshArmed();
+});
+
+$("patLiveBtn").addEventListener("click", refreshArmed);
+
+async function refreshArmed() {
+  try {
+    renderArmed(await (await fetch("/api/patterns/armed")).json());
+  } catch (e) { /* leave last state */ }
+}
+
+// The armed panel: one block per armed ticker, each matched against ITS OWN
+// study — so QQQ alerts come from the QQQ deep dive, AAPL from AAPL's.
+function renderArmed(d) {
+  const box = $("patArmedBox");
+  const list = (d && d.tickers) || [];
+  if (!list.length) {
+    box.innerHTML = `<p class="note">Nothing armed. Set the ticker + settings above, run a deep dive, then <b>Arm &amp; start alerts</b>. Each ticker is armed and monitored against its own study — arm several and all are watched.</p>`;
+    return;
+  }
+  const pcc = (v) => `<span style="color:${v >= 55 ? "#38c793" : "#c7d0e0"}">${v}%</span>`;
+  box.innerHTML = list.map((t) => {
+    const c = t.config, snap = t.snapshot || {}, matches = t.matches || [];
+    const matchKeys = new Set(matches.map((m) => m.label));
+    let live;
+    if (snap.ready) {
+      live = matches.length
+        ? `<span style="color:#38c793">&#9679; ${matches.length} MATCH now</span> @ ${snap.price} (${snap.tod}, ${snap.source})`
+        : `<span style="color:#9aa3b5">no match now</span> @ ${snap.price} (${snap.tod}, ${snap.source})`;
+    } else {
+      live = `<span style="color:#9aa3b5">${snap.reason || "waiting for data"}</span>`;
+    }
+    const rows = c.patterns.map((p) => {
+      const on = matchKeys.has(p.label);
+      return `<tr style="${on ? "background:#173a2a" : ""}">` +
+        `<td>${p.side === "long" ? "▲ long" : "▼ short"}</td>` +
+        `<td>${p.label}${on ? ' <b style="color:#38c793">&larr; MATCH</b>' : ""}</td>` +
+        `<td>${pcc(p.win_pct)}</td><td>${p.days}</td><td>${p.n}</td>` +
+        `<td>${p.avg_mins === null ? "&mdash;" : p.avg_mins}</td></tr>`;
+    }).join("");
+    return `<div style="border:1px solid #263042;border-radius:8px;padding:0.6rem 0.8rem;margin-top:0.6rem">` +
+      `<div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">` +
+      `<b style="font-size:1.05rem">${c.ticker}</b> ${live}` +
+      `<button class="run secondary patDisOne" data-t="${c.ticker}" style="margin-left:auto;padding:0.15rem 0.6rem;font-size:0.8rem">Disarm ${c.ticker}</button></div>` +
+      `<p class="note" style="margin:0.3rem 0">Armed ${c.armed_at} &mdash; <b>${c.patterns.length}</b> patterns at &plusmn;$${c.target}, win% &ge; ${c.min_win}, ` +
+      `from the ${c.lookback_days}-day / ${c.interval_min}-min study (${(c.date_range || []).join(" → ")}).</p>` +
+      (c.patterns.length ? `<details><summary class="note" style="cursor:pointer">show ${c.patterns.length} patterns</summary>` +
+        `<table><thead><tr><th>Side</th><th>Conditions</th><th>Win%</th><th>Days</th><th>Samples</th><th>Avg mins</th></tr></thead><tbody>${rows}</tbody></table></details>` : "") +
+      `</div>`;
+  }).join("");
+  box.querySelectorAll(".patDisOne").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await fetch("/api/patterns/disarm", { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker: b.dataset.t }) });
+      $("patArmStatus").textContent = `Disarmed ${b.dataset.t}.`;
+      refreshArmed();
+    }));
+}
+
+// ================= MISC TAB (divergence play) =================
+let miscChart, miscData = null, miscTf = "1d";
+$("miscBtn").addEventListener("click", loadMisc);
+$("miscTicker").addEventListener("keydown", (e) => { if (e.key === "Enter") loadMisc(); });
+document.querySelectorAll(".miscTf").forEach((b) =>
+  b.addEventListener("click", () => showMiscTf(b.dataset.tf)));
+
+// Watchlist scan: rank every ticker with a divergence by buy/sell score.
+$("miscScanBtn").addEventListener("click", async () => {
+  const body = {
+    universe: $("miscUniverse").value,
+    tickers: $("miscCustom").value,
+    include_custom: true,
+    limit: +$("miscLimit").value || 0,
+    only_divergence: $("miscOnlyDiv").checked,
+  };
+  const d = await callApi("/api/misc/scan", body, $("miscScanStatus"), [$("miscScanBtn")]);
+  if (d) renderMiscScan(d);
+});
+
+function renderMiscScan(d) {
+  $("miscScanResults").style.display = "block";
+  $("miscScanMeta").textContent = `(${d.results.length} with a divergence of ${d.tickers_scanned} scanned)`;
+  const body = $("miscScanBody");
+  if (!d.results.length) {
+    body.innerHTML = `<tr><td colspan="10">No divergences in this watchlist right now. Uncheck “only divergences” to see every name's score.</td></tr>`;
+    return;
+  }
+  const sc = (v) => `<span style="color:${v >= 30 ? "#38c793" : v <= -30 ? "#e5534b" : "#c7d0e0"};font-weight:600">${v > 0 ? "+" : ""}${v}</span>`;
+  const lblCol = (r) => r.score >= 30 ? "#38c793" : r.score <= -30 ? "#e5534b" : "#c7d0e0";
+  const at = (v) => (v === null || v === undefined ? "" : String(v)).replace(/"/g, "&quot;");
+  body.innerHTML = d.results.map((r, i) =>
+    `<tr class="miscScanRow" data-t="${r.ticker}" title="${at(r.summary)}" style="cursor:pointer">` +
+    `<td><input type="checkbox" class="miscPick" data-t="${r.ticker}" data-price="${r.price}" ` +
+    `data-score="${r.score}" data-dir="${r.direction}" data-kind="${at(r.kind)}"></td>` +
+    `<td>${i + 1}</td><td><b>${r.ticker}</b></td><td>${sc(r.score)}</td>` +
+    `<td style="color:${lblCol(r)}">${r.label}</td>` +
+    `<td>${r.direction === "bullish" ? "▲" : "▼"}</td>` +
+    `<td>${r.kind || "&mdash;"}</td>` +
+    `<td>${r.price} <span class="note">${r.change_pct >= 0 ? "+" : ""}${r.change_pct}%</span></td>` +
+    `<td style="color:${r.macd_bullish ? "#38c793" : "#e5534b"}">${r.macd_bullish ? "bull" : "bear"}</td>` +
+    `<td class="note">${r.zone}</td></tr>`).join("");
+  body.querySelectorAll(".miscPick").forEach((cb) =>
+    cb.addEventListener("click", (e) => e.stopPropagation()));  // don't open detail
+  body.querySelectorAll(".miscScanRow").forEach((row) =>
+    row.addEventListener("click", () => {
+      $("miscTicker").value = row.dataset.t;
+      loadMisc().then(() => $("miscResults").scrollIntoView({ behavior: "smooth", block: "start" }));
+    }));
+}
+
+$("miscPickAll").addEventListener("change", (e) =>
+  document.querySelectorAll(".miscPick").forEach((cb) => (cb.checked = e.target.checked)));
+
+// --- Daily tracker sub-view ---
+document.querySelectorAll(".miscSub").forEach((b) =>
+  b.addEventListener("click", () => showMiscSub(b.dataset.view)));
+
+function showMiscSub(view) {
+  document.querySelectorAll(".miscSub").forEach((b) => {
+    const on = b.dataset.view === view;
+    b.classList.toggle("secondary", !on);
+  });
+  $("miscScanView").style.display = view === "miscScanView" ? "block" : "none";
+  $("miscTrackView").style.display = view === "miscTrackView" ? "block" : "none";
+  if (view === "miscTrackView") loadTracker();
+}
+
+$("miscAddBtn").addEventListener("click", async () => {
+  const items = [...document.querySelectorAll(".miscPick:checked")].map((cb) => ({
+    ticker: cb.dataset.t, price: +cb.dataset.price, score: +cb.dataset.score,
+    direction: cb.dataset.dir, kind: cb.dataset.kind || null,
+  }));
+  if (!items.length) { $("miscAddStatus").textContent = "Tick some rows first."; return; }
+  const d = await callApi("/api/misc/tracker/add", { items }, $("miscAddStatus"), [$("miscAddBtn")]);
+  if (d) {
+    $("miscAddStatus").textContent = `Added ${items.length} — see the Daily tracker sub-tab.`;
+    $("miscPickAll").checked = false;
+    document.querySelectorAll(".miscPick").forEach((cb) => (cb.checked = false));
+    renderTracker(d);
+  }
+});
+
+async function loadTracker() {
+  try { renderTracker(await (await fetch("/api/misc/tracker")).json()); }
+  catch (e) { /* leave */ }
+}
+
+function renderTracker(d) {
+  const act = d.active || [], arch = d.archived || [];
+  $("miscTrackCount").textContent = act.length ? `(${act.length})` : "";
+  const pnl = (v) => v === null || v === undefined ? "&mdash;"
+    : `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v >= 0 ? "+" : ""}${v}%</span>`;
+  $("miscTrackBody").innerHTML = act.length ? act.map((r) =>
+    `<tr><td class="miscTrackTk" data-t="${r.ticker}" data-ad="${r.added_date}" data-ap="${r.added_price}" style="cursor:pointer;color:#4f8ef7;font-weight:600">${r.ticker}</td>` +
+    `<td>${r.added_date}</td><td>${r.direction === "bearish" ? "▼" : "▲"}</td>` +
+    `<td>${r.score_at_add ?? "&mdash;"}</td><td>${r.added_price ?? "&mdash;"}</td>` +
+    `<td>${r.price_now ?? "&mdash;"}</td><td>${pnl(r.pnl_pct)}</td>` +
+    `<td class="note">${r.note || ""}</td>` +
+    `<td style="white-space:nowrap"><button class="run secondary miscArch" data-id="${r.id}" data-t="${r.ticker}" style="padding:0.1rem 0.5rem;font-size:0.8rem">Archive</button> ` +
+    `<button class="run secondary miscDel" data-id="${r.id}" style="padding:0.1rem 0.5rem;font-size:0.8rem">✕</button></td></tr>`).join("")
+    : `<tr><td colspan="9">Nothing tracked yet. Add candidates from the scan.</td></tr>`;
+
+  $("miscArchiveCount").textContent = arch.length ? `(${arch.length})` : "(0)";
+  $("miscArchiveBody").innerHTML = arch.map((r) =>
+    `<tr><td><b>${r.ticker}</b></td><td>${r.added_date}</td><td>${r.archived_date || ""}</td>` +
+    `<td>${r.added_price ?? "&mdash;"}</td><td>${r.final_price ?? "&mdash;"}</td>` +
+    `<td class="note">${r.archive_note || ""}</td>` +
+    `<td><button class="run secondary miscDelArch" data-id="${r.id}" style="padding:0.1rem 0.5rem;font-size:0.8rem">✕</button></td></tr>`).join("")
+    || `<tr><td colspan="7" class="note">Nothing archived.</td></tr>`;
+
+  $("miscTrackBody").querySelectorAll(".miscTrackTk").forEach((el) =>
+    el.addEventListener("click", () => drawTrackerChart(el.dataset.t, el.dataset.ad, +el.dataset.ap)));
+  $("miscTrackBody").querySelectorAll(".miscDel").forEach((b) =>
+    b.addEventListener("click", async () => renderTracker(await postJson("/api/misc/tracker/delete", { id: +b.dataset.id }))));
+  $("miscArchiveBody").querySelectorAll(".miscDelArch").forEach((b) =>
+    b.addEventListener("click", async () => renderTracker(await postJson("/api/misc/tracker/delete", { id: +b.dataset.id, bucket: "archived" }))));
+  $("miscTrackBody").querySelectorAll(".miscArch").forEach((b) =>
+    b.addEventListener("click", async () => {
+      const note = prompt(`Archive ${b.dataset.t} — add a note (how did it play out?):`, "");
+      if (note === null) return;  // cancelled
+      renderTracker(await postJson("/api/misc/tracker/archive", { id: +b.dataset.id, note }));
+    }));
+}
+
+async function postJson(url, body) {
+  return (await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body) })).json();
+}
+
+let miscTrackChart;
+async function drawTrackerChart(ticker, addedDate, addedPrice) {
+  $("miscTrackChartCard").style.display = "block";
+  $("miscTrackChartMeta").innerHTML = `<b>${ticker}</b> — daily price since tracking &middot; added ${addedDate} @ ${addedPrice}`;
+  const c = await (await fetch(`/api/analyze/chart?ticker=${encodeURIComponent(ticker)}&tf=1d`)).json();
+  if (c.error) { $("miscTrackChartMeta").textContent = "Chart unavailable: " + c.error; return; }
+  if (miscTrackChart) { try { miscTrackChart.remove(); } catch (e) {} }
+  const el = $("miscTrackChart"); el.innerHTML = "";
+  miscTrackChart = LightweightCharts.createChart(el, {
+    ...TV_THEME, autoSize: true,
+    layout: { ...TV_THEME.layout, textColor: "#ffffff", fontSize: 13 },
+    timeScale: { ...TV_THEME.timeScale, visible: true, ticksVisible: true, borderColor: "#5a6577" },
+  });
+  const candles = miscTrackChart.addCandlestickSeries({
+    upColor: "#38c793", downColor: "#e5534b", borderVisible: false,
+    wickUpColor: "#38c793", wickDownColor: "#e5534b" });
+  candles.setData(c.candles);
+  candles.createPriceLine({ price: addedPrice, color: "#4f8ef7", lineWidth: 1,
+    lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true,
+    title: `added ${addedPrice}` });
+  candles.setMarkers([{ time: addedDate, position: "belowBar", color: "#4f8ef7",
+    shape: "arrowUp", text: "added" }]);
+  miscTrackChart.timeScale().fitContent();
+  $("miscTrackChartCard").scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
+async function loadMisc() {
+  const t = $("miscTicker").value.trim().toUpperCase();
+  if (!t) { $("miscStatus").textContent = "Enter a ticker."; return; }
+  $("miscBtn").disabled = true;
+  $("miscStatus").textContent = "Analyzing " + t + " across timeframes...";
+  try {
+    const a = await (await fetch("/api/misc/fibdiv?ticker=" + encodeURIComponent(t))).json();
+    if (a.error) throw new Error(a.error);
+    miscData = a;
+    $("miscStatus").textContent = "";
+    $("miscResults").style.display = "block";
+    renderMiscVerdict(a);
+    renderMtf(a);
+    await showMiscTf("1d");
+  } catch (e) {
+    $("miscStatus").textContent = "Error: " + e.message;
+  } finally {
+    $("miscBtn").disabled = false;
+  }
+}
+
+async function showMiscTf(tf) {
+  if (!miscData) return;
+  miscTf = tf;
+  document.querySelectorAll(".miscTf").forEach(
+    (b) => (b.style.outline = b.dataset.tf === tf ? "2px solid #4f8ef7" : ""));
+  const t = miscData.ticker;
+  const c = await (await fetch(`/api/analyze/chart?ticker=${encodeURIComponent(t)}&tf=${tf}`)).json();
+  if (c.error) { $("miscChartNote").textContent = "Chart unavailable: " + c.error; return; }
+  drawMiscChart(miscData, c, tf);
+}
+
+// The timeframe stack: does the smaller picture confirm the bigger one?
+function renderMtf(a) {
+  const m = a.mtf_read || {}, scans = a.mtf || [];
+  const col = { stacked: "#38c793", leading: "#4dd0e1", conflict: "#e5534b",
+                big_only: "#f0b429", none: "#9aa3b5" }[m.stack] || "#c7d0e0";
+  const dot = (s) => !s.ok ? '<span style="color:#5a6577">—</span>'
+    : s.found ? `<span style="color:${s.direction === "bullish" ? "#38c793" : "#e5534b"}">●</span>`
+              : '<span style="color:#5a6577">○</span>';
+  const rows = scans.map((s) =>
+    `<tr><td><b>${s.label}</b></td>` +
+    `<td style="text-align:center">${dot(s)}</td>` +
+    `<td>${!s.ok ? "no data" : s.found ? `${s.kind} ${s.direction}` : "no divergence"}</td>` +
+    `<td>${s.rsi_now ?? "&mdash;"}</td>` +
+    `<td>${s.trend || "&mdash;"}</td>` +
+    `<td>${s.price ?? "&mdash;"} <span class="note">${s.source || ""}</span></td></tr>`).join("");
+  $("miscMtf").innerHTML =
+    `<h3 style="margin-top:0">Timeframe stack <span class="meta">— smaller picture vs bigger picture</span></h3>` +
+    `<p style="font-weight:600;color:${col};margin:0 0 0.6rem">${m.headline || ""}</p>` +
+    `<table><thead><tr><th>Picture</th><th>Div</th><th>Signal</th><th>RSI</th><th>Trend</th><th>Price</th></tr></thead>` +
+    `<tbody>${rows}</tbody></table>` +
+    `<ul class="note" style="margin:0.6rem 0 0;padding-left:1.1rem;line-height:1.6">` +
+    (m.bullets || []).map((b) => `<li>${b}</li>`).join("") + `</ul>`;
+}
+
+function renderMiscVerdict(a) {
+  const color = a.confirmed ? "#38c793" : a.exists ? "#f0b429" : "#e5534b";
+  const icon = a.direction === "bullish" ? "▲" : "▼";
+  const chg = a.today.change_pct;
+  const tr = a.trend || {};
+  const trCol = tr.direction === "up" ? "#38c793" : tr.direction === "down" ? "#e5534b" : "#c7d0e0";
+  const trArrow = tr.direction === "up" ? "↗" : tr.direction === "down" ? "↘" : "→";
+  $("miscVerdict").innerHTML =
+    `<div style="font-size:1.15rem;font-weight:600;color:${color}">${icon} ${a.verdict}</div>` +
+    `<p class="note" style="margin:0.4rem 0 0"><b>${a.ticker} ${a.today.price}</b> ` +
+    `<span style="color:${chg >= 0 ? "#38c793" : "#e5534b"}">${chg >= 0 ? "+" : ""}${chg}%</span> today ` +
+    `&middot; MACD ${a.macd.macd} vs signal ${a.macd.signal} ` +
+    `<span style="color:${a.macd.bullish ? "#38c793" : "#e5534b"}">${a.macd.bullish ? "bullish" : "bearish"}</span> ` +
+    `&middot; ${a.position.pct_of_swing}% through the swing &mdash; ${a.position.zone}</p>` +
+    (tr.direction ? `<p class="note" style="margin:0.3rem 0 0"><b style="color:${trCol}">${trArrow} Trend: ${tr.direction}</b> &mdash; ${tr.text}</p>` : "");
+  const rows = a.structure.map((s) =>
+    `<tr><td><b>${s.key}</b></td><td>${s.label}</td><td>${s.date}</td>` +
+    `<td style="text-align:right"><b>${s.price}</b></td></tr>`);
+  rows.push(`<tr><td colspan="4" style="padding-top:6px;color:#7c8aa5">Fibonacci ${a.fib.base} &rarr; ${a.fib.top}</td></tr>`);
+  for (const lv of a.fib.levels) {
+    const gp = lv.f === 0.618 || lv.f === 0.786;
+    const c = gp ? "#e08b4e" : lv.f === 0.5 ? "#c7d0e0" : "#8a94a6";
+    rows.push(`<tr><td></td><td colspan="2" style="color:${c}">${lv.label}</td>` +
+      `<td style="text-align:right;color:${c}">${lv.price}</td></tr>`);
+  }
+  $("miscLevelBody").innerHTML = rows.join("");
+  $("miscReasons").innerHTML = a.reasons.map((r) => `<li>${r}</li>`).join("");
+}
+
+function drawMiscChart(a, c, tf) {
+  if (miscChart) { try { miscChart.main.remove(); miscChart.rsi.remove(); } catch (e) {} }
+  const elMain = $("miscC"), elRsi = $("miscR");
+  elMain.innerHTML = ""; elRsi.innerHTML = "";
+  const intraday = tf !== "1d";
+  const main = LightweightCharts.createChart(elMain, {
+    ...TV_THEME, autoSize: true,
+    layout: { ...TV_THEME.layout, textColor: "#ffffff", fontSize: 13 },
+    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false,
+      visible: true, ticksVisible: true, borderColor: "#5a6577" },
+  });
+  const rsiChart = LightweightCharts.createChart(elRsi, {
+    ...TV_THEME, autoSize: true,
+    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, visible: false },
+  });
+  miscChart = { main, rsi: rsiChart };
+  const DASH = LightweightCharts.LineStyle.Dashed;
+  const DOT = LightweightCharts.LineStyle.Dotted;
+  const SOLID = LightweightCharts.LineStyle.Solid;
+
+  const candles = main.addCandlestickSeries({
+    upColor: "#38c793", downColor: "#e5534b", borderVisible: false,
+    wickUpColor: "#38c793", wickDownColor: "#e5534b",
+  });
+  candles.setData(c.candles);
+  const priceLine = (price, color, style, title, width) => candles.createPriceLine({
+    price, color, lineWidth: width || 1, lineStyle: style, axisLabelVisible: true, title });
+
+  // Bigger-picture STRUCTURE + FIB are absolute prices — draw on EVERY
+  // timeframe so the smaller pictures can be seen reacting at them.
+  for (const s of a.structure) {
+    const col = s.key === "LL" || s.key === "HL" ? "#38c793" : "#e5534b";
+    priceLine(s.price, col, SOLID, `${s.key} ${s.price}`, 2);
+  }
+  for (const lv of a.fib.levels) {
+    const gp = lv.f === 0.618 || lv.f === 0.786;
+    priceLine(lv.price, gp ? "#e08b4e" : lv.f === 0.5 ? "#9aa3b5" : "#6f6250",
+      gp ? DASH : DOT, `${lv.f} ${lv.price}`, gp ? 2 : 1);
+  }
+
+  // Daily-only overlays (their times are daily dates): TRAMA24, anchored VWAP,
+  // trendlines, and the dated swing markers.
+  if (!intraday) {
+    const ov = a.overlays || {};
+    if (ov.trama24 && ov.trama24.length)
+      main.addLineSeries({ color: "#f0b429", lineWidth: 2, priceLineVisible: false,
+        lastValueVisible: true, crosshairMarkerVisible: false, title: "TRAMA 24" }).setData(ov.trama24);
+    if (ov.vwap && ov.vwap.points && ov.vwap.points.length)
+      main.addLineSeries({ color: "#b58cf0", lineWidth: 2, lineStyle: DOT, priceLineVisible: false,
+        lastValueVisible: true, crosshairMarkerVisible: false, title: "aVWAP" }).setData(ov.vwap.points);
+    for (const tl of (ov.trendlines || []))
+      main.addLineSeries({ color: tl.label.includes("support") ? "#7bc96f" : "#e08b4e",
+        lineWidth: 1, lineStyle: DASH, priceLineVisible: false, lastValueVisible: false,
+        crosshairMarkerVisible: false }).setData(tl.points);
+    candles.setMarkers(a.structure.map((s) => ({
+      time: s.date, position: s.key === "HH" || s.key === "LH" ? "aboveBar" : "belowBar",
+      color: s.key === "LL" || s.key === "HL" ? "#38c793" : "#e5534b",
+      shape: "circle", text: s.key,
+    })).sort((x, y) => (x.time < y.time ? -1 : 1)));
+  }
+
+  // The divergence for THIS timeframe (daily from the full analysis, the
+  // smaller pictures from their own scans) — drawn on price and RSI panes.
+  const dvg = tf === "1d" ? a.divergence
+    : ((a.mtf || []).find((s) => s.tf === tf) || {}).divergence;
+  if (dvg && dvg.found) {
+    main.addLineSeries({ color: "#4dd0e1", lineWidth: 2, lineStyle: DASH,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+      .setData(dvg.price_points);
+  }
+  const rsiSeries = rsiChart.addLineSeries({ color: "#4f8ef7", lineWidth: 2,
+    lastValueVisible: true, title: "RSI 14", ...RSI_SCALE });
+  rsiSeries.setData(c.rsi);
+  // Bollinger bands on RSI — brighter violet envelope + labelled edges so the
+  // band reads clearly against the dark pane (was a near-invisible slate).
+  for (const [k, color, st, title, lastv] of [
+    ["rsi_bb_up", "#c9a9f5", DASH, "BB", true],
+    ["rsi_bb_mid", "#8a94a6", DOT, "", false],
+    ["rsi_bb_lo", "#c9a9f5", DASH, "BB", true],
+  ]) {
+    if (c[k]) rsiChart.addLineSeries({ color, lineWidth: 1, lineStyle: st, title,
+      priceLineVisible: false, lastValueVisible: lastv, crosshairMarkerVisible: false,
+      ...RSI_SCALE }).setData(c[k]);
+  }
+  for (const lvl of [30, 70]) rsiSeries.createPriceLine({ price: lvl, color: "#6b7688",
+    lineWidth: 1, lineStyle: DASH, axisLabelVisible: true, title: String(lvl) });
+  if (dvg && dvg.found)
+    rsiChart.addLineSeries({ color: "#4dd0e1", lineWidth: 2, lineStyle: DASH,
+      priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+      ...RSI_SCALE }).setData(dvg.rsi_points);
+
+  main.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (r) rsiChart.timeScale().setVisibleLogicalRange(r); });
+  rsiChart.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (r) main.timeScale().setVisibleLogicalRange(r); });
+  main.timeScale().fitContent();
+
+  const label = tf === "1d" ? "Daily (bigger picture)" : tf === "4h" ? "4-hour (smaller picture)" : "15-min (timing)";
+  const extra = intraday ? "" :
+    `, <span style="color:#f0b429">TRAMA24</span>, <span style="color:#b58cf0">aVWAP</span>, <span style="color:#7bc96f">trendlines</span>`;
+  $("miscChartMeta").innerHTML =
+    `<b>${a.ticker} ${label}</b> &mdash; data: ${c.source} &mdash; ` +
+    `<span style="color:#e08b4e">golden pocket ${a.fib.gp[0]}&ndash;${a.fib.gp[1]}</span> ` +
+    `(same band on every timeframe)${extra}, red/green = swing levels, ` +
+    `<span style="color:#4dd0e1">cyan = divergence</span>`;
+  $("miscChartNote").innerHTML = dvg && dvg.found
+    ? `<b>${label}: divergence drawn (cyan).</b> ${dvg.text || ""}`
+    : `<b>${label}:</b> no active divergence on this timeframe right now — the cyan line only appears when price and RSI disagree at the latest swing.`;
 }
 
 // ================= BEAR STRATEGY TAB =================
@@ -1156,9 +2020,20 @@ $("anBtn").addEventListener("click", async () => {
 const TV_THEME = {
   layout: { background: { type: "solid", color: "transparent" }, textColor: "#9aa3b5" },
   grid: { vertLines: { color: "#1a2230" }, horzLines: { color: "#1a2230" } },
-  rightPriceScale: { borderColor: "#2a3444" },
+  rightPriceScale: { borderColor: "#2a3444", minimumWidth: 64 },
   timeScale: { borderColor: "#2a3444" },
-  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  // Bright crosshair labels: the hovered date/time (on the time axis) and price
+  // (on the price axis) render as a blue chip with auto-contrast text, instead
+  // of the default dark-on-dark box that was effectively invisible.
+  crosshair: {
+    mode: LightweightCharts.CrosshairMode.Normal,
+    // The on-axis time chip clips in the thin strip between the stacked price
+    // and RSI charts, so hide it (labelVisible:false) and show the hovered
+    // date/time in the top-left legend instead, where it can't be cut off.
+    // The price chip on the right axis stays — it has room.
+    vertLine: { labelVisible: false, color: "#4f8ef7", width: 1, style: LightweightCharts.LineStyle.Dashed },
+    horzLine: { labelBackgroundColor: "#4f8ef7", color: "#4f8ef7", width: 1, style: LightweightCharts.LineStyle.Dashed },
+  },
 };
 const LEVEL_STYLE = {
   day_open: { color: "#4f8ef7", style: LightweightCharts.LineStyle.Dashed },
@@ -1195,13 +2070,20 @@ async function loadTvChart(ticker, tf, key) {
   const elMain = $("anC-" + key), elRsi = $("anR-" + key);
   elMain.innerHTML = ""; elRsi.innerHTML = "";
   const intraday = tf !== "1d";
+  // Two stacked charts, one time axis. The price chart is tall and renders the
+  // axis cleanly, so it owns the (bright, readable) date/time axis right under
+  // the candles; the short RSI chart clips axis labels, so its axis is hidden.
   const main = LightweightCharts.createChart(elMain, {
     ...TV_THEME, autoSize: true,
-    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
+    layout: { ...TV_THEME.layout, textColor: "#ffffff", fontSize: 14 },
+    timeScale: {
+      ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false,
+      visible: true, ticksVisible: true, borderColor: "#5a6577",
+    },
   });
   const rsiChart = LightweightCharts.createChart(elRsi, {
     ...TV_THEME, autoSize: true,
-    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false },
+    timeScale: { ...TV_THEME.timeScale, timeVisible: intraday, secondsVisible: false, visible: false },
   });
   anCharts[key] = { main, rsi: rsiChart, tf, ticker, patternLoaded: false };
 
@@ -1216,8 +2098,8 @@ async function loadTvChart(ticker, tf, key) {
   // left of the price pane (the axis tooltip can clip at the pane edge).
   elMain.style.position = "relative";
   const legend = document.createElement("div");
-  legend.style.cssText = "position:absolute;top:6px;left:8px;z-index:10;font-size:0.8rem;" +
-    "color:#c7d0e0;background:rgba(13,20,32,0.75);padding:2px 8px;border-radius:4px;pointer-events:none";
+  legend.style.cssText = "position:absolute;top:6px;left:8px;z-index:10;font-size:0.95rem;" +
+    "color:#e6ebf5;background:rgba(13,20,32,0.85);padding:3px 10px;border-radius:4px;pointer-events:none";
   elMain.appendChild(legend);
   const pad2 = (n) => String(n).padStart(2, "0");
   const fmtT = (t) => {
@@ -1232,7 +2114,8 @@ async function loadTvChart(ticker, tf, key) {
     const bar = param.time !== undefined && param.seriesData ? param.seriesData.get(candles) : null;
     if (!bar) { legend.innerHTML = idle; return; }
     const chg = ((bar.close - bar.open) / bar.open) * 100;
-    legend.innerHTML = `<b>${ticker}</b> ${fmtT(param.time)} &nbsp; ` +
+    legend.innerHTML = `<b>${ticker}</b> ` +
+      `<span style="background:#4f8ef7;color:#fff;padding:1px 6px;border-radius:3px;font-weight:600">${fmtT(param.time)}</span> &nbsp; ` +
       `O ${bar.open}&nbsp; H ${bar.high}&nbsp; L ${bar.low}&nbsp; C ${bar.close}&nbsp; ` +
       `<span style="color:${chg >= 0 ? "#38c793" : "#e5534b"}">${chg >= 0 ? "+" : ""}${chg.toFixed(2)}%</span>`;
   });

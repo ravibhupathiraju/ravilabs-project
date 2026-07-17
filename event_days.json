@@ -1,0 +1,6 @@
+{
+  "_comment": "Extra event days excluded from Pattern lab analysis (YYYY-MM-DD). FOMC decision days 2023-2026, NFP Fridays and half sessions are built in already; add CPI release dates and anything else (elections, OPEX, big earnings) to the lists below.",
+  "fomc": [],
+  "cpi": [],
+  "custom": []
+}
