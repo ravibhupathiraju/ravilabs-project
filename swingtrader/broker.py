@@ -25,12 +25,22 @@ the first alert owns the position and later ones are skipped.
 
 import json
 import os
+import re
+import uuid
 from pathlib import Path
 
 import requests
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / "alpaca.json"
+CHANNELS_PATH = Path(__file__).resolve().parent.parent / "broker_channels.json"
 PAPER_URL = "https://paper-api.alpaca.markets"
+
+# Per-tab kill switches for paper-trade ENTRIES. A paused channel still
+# alerts and logs exactly as before -- signals just never reach the broker.
+# Exits (close/flatten) are never gated, so pausing cannot strand an open
+# position. Persisted to broker_channels.json so the choice survives restarts.
+# All three strategies trade by default; pause from any tab's pill.
+DEFAULT_CHANNELS = {"swing": True, "zerodte": True, "tvtester": True}
 
 # Portfolio guardrails. A single scan of the full universe can produce 40+
 # simultaneous signals; without caps they would all be sent, blow past the
@@ -50,7 +60,14 @@ DEFAULT_ZERODTE_STRATEGIES = ["vwap"]
 UNTRADABLE = {"SPX"}
 
 
-def _config() -> dict:
+def _config(channel: str | None = None) -> dict:
+    """Settings plus the API keys for one strategy channel.
+
+    Each channel (swing / zerodte / tvtester) trades on its OWN paper
+    account, configured under ``accounts.<channel>`` in alpaca.json, so
+    each strategy's equity curve and fill history stay cleanly separated.
+    Channels without an entry fall back to the top-level keys.
+    """
     cfg = {
         "key_id": os.environ.get("APCA_API_KEY_ID", ""),
         "secret_key": os.environ.get("APCA_API_SECRET_KEY", ""),
@@ -69,6 +86,10 @@ def _config() -> dict:
         for k in cfg:
             if file_cfg.get(k) is not None and file_cfg.get(k) != "":
                 cfg[k] = file_cfg[k]
+        acct = (file_cfg.get("accounts") or {}).get(channel or "") or {}
+        if acct.get("key_id") and acct.get("secret_key"):
+            cfg["key_id"] = acct["key_id"]
+            cfg["secret_key"] = acct["secret_key"]
     cfg["notional_per_trade"] = float(cfg["notional_per_trade"])
     cfg["max_positions"] = int(cfg["max_positions"])
     cfg["max_exposure_pct"] = float(cfg["max_exposure_pct"])
@@ -82,8 +103,45 @@ def zerodte_strategies() -> list[str]:
     return _config()["zerodte_strategies"]
 
 
-def enabled() -> bool:
-    cfg = _config()
+def channels() -> dict:
+    """Current active/paused state of every trading channel."""
+    out = dict(DEFAULT_CHANNELS)
+    if CHANNELS_PATH.exists():
+        try:
+            saved = json.loads(CHANNELS_PATH.read_text(encoding="utf-8"))
+            out.update({k: bool(v) for k, v in saved.items() if k in out})
+        except (OSError, ValueError) as exc:
+            print(f"[broker] cannot read {CHANNELS_PATH.name}: {exc}")
+    return out
+
+
+def set_channel(name: str, active: bool) -> dict:
+    """Flip one channel's entry gate and persist the whole map."""
+    ch = channels()
+    if name not in ch:
+        raise ValueError(f"unknown channel {name!r}")
+    ch[name] = bool(active)
+    CHANNELS_PATH.write_text(json.dumps(ch, indent=2), encoding="utf-8")
+    print(f"[broker] channel {name} -> {'ACTIVE' if active else 'PAUSED'}")
+    return ch
+
+
+def channel_active(name: str) -> bool:
+    return channels().get(name, False)
+
+
+def _tag(prefix: str, strategy: str | None) -> str:
+    """Client-order-id carrying the strategy, e.g. ``sw_breakout_a1b2c3d4``.
+
+    Performance analysis parses these back out of the broker's own order
+    history, so attribution never depends on local state.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "", (strategy or "x").lower())[:20] or "x"
+    return f"{prefix}_{slug}_{uuid.uuid4().hex[:8]}"
+
+
+def enabled(channel: str | None = None) -> bool:
+    cfg = _config(channel)
     return bool(cfg["key_id"] and cfg["secret_key"])
 
 
@@ -104,8 +162,20 @@ def _request(method: str, path: str, cfg: dict, **kwargs):
 
 
 def status() -> dict:
-    """Account, positions and open orders for the UI. Never raises."""
-    cfg = _config()
+    """Per-channel account/positions/orders for the UI. Never raises.
+
+    One block per strategy channel, since each trades on its own paper
+    account: {"channels": {...}, "swing": {...}, "zerodte": {...},
+    "tvtester": {...}} -- each block in the classic single-account shape.
+    """
+    out: dict = {"channels": channels()}
+    for ch in DEFAULT_CHANNELS:
+        out[ch] = _channel_status(ch)
+    return out
+
+
+def _channel_status(channel: str) -> dict:
+    cfg = _config(channel)
     if not (cfg["key_id"] and cfg["secret_key"]):
         return {"enabled": False}
     try:
@@ -180,8 +250,13 @@ def _portfolio(cfg: dict) -> dict:
     }
 
 
-def buy_bracket(symbol: str, price: float, stop: float, target: float | None):
+def buy_bracket(symbol: str, price: float, stop: float, target: float | None,
+                strategy: str | None = None):
     """Market buy with a server-side stop (and target when given).
+
+    Sent to the SWING channel's own paper account, tagged with a
+    ``sw_<strategy>_`` client-order-id so performance analysis can
+    attribute every fill to the strategy that generated it.
 
     Returns {"id", "qty", "notional"} on success, or None when disabled,
     skipped by a guardrail, or rejected. Whole shares sized from
@@ -193,8 +268,11 @@ def buy_bracket(symbol: str, price: float, stop: float, target: float | None):
       - at most `max_positions` concurrent positions
       - total exposure kept under `max_exposure_pct` of equity
     """
-    cfg = _config()
+    cfg = _config("swing")
     if not (cfg["key_id"] and cfg["secret_key"]):
+        return None
+    if not channel_active("swing"):
+        print(f"[broker] {symbol}: swing paper trading paused; alert only")
         return None
     symbol = symbol.replace("-", ".")  # BRK-B (yahoo) -> BRK.B (alpaca)
     try:
@@ -228,6 +306,7 @@ def buy_bracket(symbol: str, price: float, stop: float, target: float | None):
             "time_in_force": "gtc",
             "order_class": "bracket" if target else "oto",
             "stop_loss": {"stop_price": f"{stop:.2f}"},
+            "client_order_id": _tag("sw", strategy),
         }
         if target:
             payload["take_profit"] = {"limit_price": f"{target:.2f}"}
@@ -252,8 +331,11 @@ def zerodte_order(symbol: str, strategy: str, direction: str, price: float):
     Returns {"id", "qty", "notional", "side"} or None when disabled, not in
     zerodte_strategies, untradable (SPX), or blocked by a guardrail.
     """
-    cfg = _config()
+    cfg = _config("zerodte")  # the 0DTE strategy's own paper account
     if not (cfg["key_id"] and cfg["secret_key"]):
+        return None
+    if not channel_active("zerodte"):
+        print(f"[broker] {symbol}: 0DTE paper trading paused; alert only")
         return None
     if strategy not in cfg["zerodte_strategies"]:
         return None  # alert-only strategy: logged, never traded
@@ -289,6 +371,7 @@ def zerodte_order(symbol: str, strategy: str, direction: str, price: float):
             "side": side,
             "type": "market",
             "time_in_force": "day",   # never carries overnight
+            "client_order_id": _tag("zd", strategy),
         })
         print(f"[broker] {symbol}: 0DTE {strategy} paper {side} {qty} shares "
               f"(~${notional:,.0f}) (order {order['id'][:8]})")
@@ -298,14 +381,15 @@ def zerodte_order(symbol: str, strategy: str, direction: str, price: float):
         return None
 
 
-def flatten(symbols: list[str]) -> int:
+def flatten(symbols: list[str], channel: str = "zerodte") -> int:
     """Close any open paper position in `symbols` (0DTE end-of-session sweep).
 
-    Scoped to the symbols passed in -- swing positions must survive the close,
-    so this never touches anything outside the 0DTE list. Returns the number
-    of positions actually closed.
+    Runs on the channel's own account (0DTE by default). Since each strategy
+    now trades on a separate account, the sweep can no longer collide with
+    swing positions even for overlapping symbols. Returns the number of
+    positions actually closed.
     """
-    cfg = _config()
+    cfg = _config(channel)
     if not (cfg["key_id"] and cfg["secret_key"]):
         return 0
     try:
@@ -316,20 +400,21 @@ def flatten(symbols: list[str]) -> int:
     wanted = {s for s in symbols if s not in UNTRADABLE}
     closed = 0
     for p in positions:
-        if p["symbol"] in wanted and close(p["symbol"]):
+        if p["symbol"] in wanted and close(p["symbol"], channel):
             closed += 1
     if closed:
         print(f"[broker] end-of-session sweep: flattened {closed} 0DTE position(s)")
     return closed
 
 
-def close(symbol: str) -> bool:
+def close(symbol: str, channel: str = "swing") -> bool:
     """Cancel open orders on the symbol and close the position at market.
 
-    Safe to call when the position is already flat (bracket leg filled):
-    Alpaca answers 404 and this returns False quietly.
+    Runs on the channel's own account. Safe to call when the position is
+    already flat (bracket leg filled): Alpaca answers 404 and this returns
+    False quietly.
     """
-    cfg = _config()
+    cfg = _config(channel)
     if not (cfg["key_id"] and cfg["secret_key"]):
         return False
     symbol = symbol.replace("-", ".")

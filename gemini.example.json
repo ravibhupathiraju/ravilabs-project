@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to gemini.json and paste your free API key from https://aistudio.google.com/apikey (any Google account; separate from a Gemini Pro subscription). Optional: pin a model, otherwise the app tries gemini-2.5-flash, then 2.0, then 1.5.",
+  "api_key": "AIza...",
+  "model": ""
+}

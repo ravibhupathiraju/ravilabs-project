@@ -10,7 +10,8 @@ import re
 from flask import Flask, jsonify, render_template, request
 
 from swingtrader import (
-    alerts, analyzer, backtest, bear, broker, fibdiv, patterns, screener, tracker, zerodte,
+    alerts, analyzer, backtest, bear, broker, fibdiv, patterns, perf,
+    screener, tracker, tvtester, zerodte,
 )
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
@@ -193,6 +194,95 @@ def api_broker_status():
     return jsonify(broker.status())
 
 
+@app.get("/api/settings/toasts")
+def api_toasts_get():
+    return jsonify({"toasts": alerts.toasts_enabled()})
+
+
+@app.post("/api/settings/toasts")
+def api_toasts_set():
+    payload = request.get_json(force=True)
+    return jsonify({"toasts": alerts.set_toasts(bool(payload.get("on")))})
+
+
+@app.get("/api/broker/channels")
+def api_broker_channels():
+    return jsonify({"channels": broker.channels()})
+
+
+@app.post("/api/broker/channels")
+def api_broker_channels_set():
+    payload = request.get_json(force=True)
+    try:
+        ch = broker.set_channel(str(payload.get("channel")), bool(payload.get("active")))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"channels": ch})
+
+
+@app.post("/api/tv/parse")
+def api_tv_parse():
+    payload = request.get_json(force=True)
+    return jsonify(tvtester.parse(payload.get("notes") or ""))
+
+
+@app.post("/api/tv/plan")
+def api_tv_plan():
+    payload = request.get_json(force=True)
+    try:
+        res = tvtester.arm_plan(
+            ticker=payload.get("ticker") or "",
+            qty=int(payload.get("qty") or 0),
+            entry=float(payload.get("entry") or 0),
+            stop=float(payload.get("stop") or 0),
+            target=float(payload.get("target") or 0),
+            notes=payload.get("notes") or "",
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return (jsonify(res), 400) if "error" in res else jsonify(res)
+
+
+@app.post("/api/tv/plan/cancel")
+def api_tv_plan_cancel():
+    payload = request.get_json(force=True)
+    return jsonify(tvtester.cancel_plan(int(payload.get("id"))))
+
+
+@app.post("/api/tv/manual")
+def api_tv_manual():
+    payload = request.get_json(force=True)
+    try:
+        res = tvtester.manual_order(
+            ticker=payload.get("ticker") or "",
+            side=payload.get("side") or "",
+            qty=int(payload.get("qty") or 0),
+            limit=float(payload["limit"]) if payload.get("limit") else None,
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    return (jsonify(res), 400) if "error" in res else jsonify(res)
+
+
+@app.get("/api/tv/summary")
+def api_tv_summary():
+    return jsonify(tvtester.summary())
+
+
+@app.post("/api/perf")
+def api_perf():
+    payload = request.get_json(force=True)
+    raw = payload.get("symbols") or ""
+    symbols = [t for t in re.split(r"[,\s]+", raw) if t.strip()]
+    return jsonify(perf.analyze(
+        channels=payload.get("channels") or None,
+        start=payload.get("start") or None,
+        end=payload.get("end") or None,
+        symbols=symbols or None,
+        strategy=payload.get("strategy") or None,
+    ))
+
+
 @app.post("/api/analyze")
 def api_analyze():
     payload = request.get_json(force=True)
@@ -350,5 +440,34 @@ def api_bear_research():
     return jsonify(data)
 
 
+def _autostart_monitors() -> None:
+    """Bring every strategy live on boot: 0DTE + swing monitors polling
+    during market hours, ready to place paper trades when signals trigger.
+
+    TV-tester plans need no monitor -- their brackets rest server-side at
+    Alpaca. Defaults: all 0DTE symbols/strategies, swing over the full
+    universe with every strategy, standard earnings buffer. Starting from
+    a tab afterwards just reconfigures that tab's channel.
+    """
+    try:
+        alerts.MONITOR.start(
+            symbols=list(zerodte.SYMBOLS),
+            strategies=[],  # empty = all 0DTE strategies
+            swing_universe="all",
+            swing_strategies=list(STRATEGIES),
+            configure=("zerodte", "swing"),
+        )
+        print("[autostart] monitors live: 0DTE + swing (all strategies), "
+              "paper trading ready on their own accounts")
+    except Exception as exc:
+        print(f"[autostart] monitor failed: {exc}")
+
+
 if __name__ == "__main__":
+    import os
+
+    # With the debug reloader, only the serving child (WERKZEUG_RUN_MAIN set)
+    # may start the monitor thread -- otherwise it runs twice.
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        _autostart_monitors()
     app.run(debug=True)

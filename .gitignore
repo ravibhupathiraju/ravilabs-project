@@ -8,3 +8,8 @@ alerts.db
 alpaca.json
 patterns_armed.json
 misc_tracker.json
+patterns_cache.json
+tv_plans.json
+broker_channels.json
+gemini.json
+app_settings.json

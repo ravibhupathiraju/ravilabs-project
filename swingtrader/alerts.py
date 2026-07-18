@@ -21,8 +21,9 @@ treat alert prices as approximate and confirm on your own quotes.
 
 import sqlite3
 import threading
+import json
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -45,9 +46,15 @@ from .zerodte import (
 )
 
 DB_PATH = Path(__file__).resolve().parent.parent / "alerts.db"
+SETTINGS_PATH = Path(__file__).resolve().parent.parent / "app_settings.json"
 NY = ZoneInfo("America/New_York")
 POLL_SECONDS = 60
-SWING_POLL_SECONDS = 900  # swing signals form on daily bars; 15 min is plenty
+# Swing signals form on COMPLETED daily bars: intraday scans are provisional
+# heads-ups only (paper orders are placed by the 16:15 EOD scan, and open
+# positions are protected server-side by their bracket legs). Hourly keeps
+# the heads-up value at a quarter of the yfinance load of the old 15 min.
+SWING_POLL_SECONDS = 3600
+REVERSAL_POLL_SECONDS = 900   # analyzer reversal watch: alert-only, 15 min
 PATTERN_POLL_SECONDS = 300  # intraday pattern conditions, checked every 5 min
 SESSION_END = "16:00"
 
@@ -236,7 +243,37 @@ def performance(strategy: str | None = None, kind: str | None = None) -> dict:
 # Desktop notifications
 # --------------------------------------------------------------------------
 
+def _settings() -> dict:
+    try:
+        return json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _settings_set(key: str, value) -> None:
+    s = _settings()
+    s[key] = value
+    SETTINGS_PATH.write_text(json.dumps(s, indent=2), encoding="utf-8")
+
+
+def toasts_enabled() -> bool:
+    """Desktop popups on/off. Default OFF -- trading and logging always
+    continue regardless; this only silences the Windows notifications."""
+    return bool(_settings().get("toasts"))
+
+
+def set_toasts(on: bool) -> bool:
+    _settings_set("toasts", bool(on))
+    print(f"[alert] desktop popups {'ON' if on else 'OFF'}")
+    return bool(on)
+
+
 def _toast(title: str, body: str) -> None:
+    """Alert the user. Popups only when enabled; the console line (and the
+    SQLite row every caller writes) happen either way, so nothing is lost."""
+    if not toasts_enabled():
+        print(f"[alert] {title} | {body}")
+        return
     try:
         from winotify import Notification
 
@@ -598,7 +635,8 @@ def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
         and not _market_hours(now)
     ):
         order = broker.buy_bracket(
-            sig["ticker"], sig["close"], sig["stop"], sig.get("target")
+            sig["ticker"], sig["close"], sig["stop"], sig.get("target"),
+            strategy=strat.name,
         )
         if order:
             with _db() as con:
@@ -710,7 +748,7 @@ def _track_swing_positions(earnings_buffer: int, now: datetime) -> None:
                 # exits too: the bracket leg usually filled broker-side
                 # already, in which case this is a quiet no-op.
                 if row.get("broker_order_id"):
-                    broker.close(ticker)
+                    broker.close(ticker, channel="swing")
                 break
 
 
@@ -806,11 +844,9 @@ class AlertMonitor:
         if self.running:  # already polling: the new config takes effect next tick
             return self.status()
         self._last_swing_ts = None
-        # A start after 16:15 makes the immediate first tick the EOD scan.
-        now = datetime.now(NY)
-        self._last_eod_date = (
-            now.strftime("%Y-%m-%d") if now.strftime("%H:%M") >= "16:15" else None
-        )
+        # Persisted, so a restart knows which session's EOD scan already ran
+        # and does not redo it (the boot catch-up checks the same date).
+        self._last_eod_date = _settings().get("last_eod_date")
         self._reconciled_key = None
         self._stop.clear()
         self.started_at = datetime.now(NY).isoformat(timespec="seconds")
@@ -858,6 +894,17 @@ class AlertMonitor:
         hm = now.strftime("%H:%M")
         return "09:30" <= hm <= "16:10"  # small grace window to settle exits
 
+    @staticmethod
+    def _last_completed_session(now: datetime) -> str:
+        """The most recent weekday whose 16:15 close has already passed --
+        the session whose completed daily bar the EOD scan should cover."""
+        d = now.date()
+        if now.weekday() >= 5 or now.strftime("%H:%M") < "16:15":
+            d -= timedelta(days=1)
+            while d.weekday() >= 5:
+                d -= timedelta(days=1)
+        return d.strftime("%Y-%m-%d")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             now = datetime.now(NY)
@@ -888,21 +935,38 @@ class AlertMonitor:
                 and self._flattened_date != now.strftime("%Y-%m-%d")
             ):
                 try:
-                    broker.flatten(self.symbols)
+                    broker.flatten(self.symbols, channel="zerodte")
                 except Exception as exc:
                     print(f"[alert] flatten error: {exc}")
                 self._flattened_date = now.strftime("%Y-%m-%d")
-            # Swing tick: once immediately on start (catches the latest close's
-            # signals even outside market hours), then every 15 min while open.
-            if self.swing_tickers and self.swing_strategies and (
-                self._last_swing_ts is None
-                or (
-                    self._market_open(now)
-                    and time.time() - self._last_swing_ts >= SWING_POLL_SECONDS
-                )
-            ):
+            # Swing tick. On boot it runs ONLY as a catch-up -- when the last
+            # completed session's EOD scan hasn't happened yet (app was off at
+            # the close): that scan queues the paper orders that fill at the
+            # next open, so it must run even on a weekend. If the EOD scan is
+            # already on record, boot is silent. After boot: hourly during
+            # market hours (provisional heads-ups; the EOD scan trades).
+            swing_due = False
+            if self.swing_tickers and self.swing_strategies:
+                if self._last_swing_ts is None:
+                    behind = self._last_eod_date != self._last_completed_session(now)
+                    swing_due = behind
+                    if not behind:
+                        self._last_swing_ts = time.time()  # quiet boot
+                        print(f"[alert] swing: {self._last_completed_session(now)} "
+                              "close already scanned; next scan at market open/EOD")
+                else:
+                    swing_due = (
+                        self._market_open(now)
+                        and time.time() - self._last_swing_ts >= SWING_POLL_SECONDS
+                    )
+            if swing_due:
                 try:
                     self._swing_tick(now)
+                    if not self._market_open(now):
+                        # boot catch-up doubles as the missed EOD scan
+                        done = self._last_completed_session(now)
+                        self._last_eod_date = done
+                        _settings_set("last_eod_date", done)
                 except Exception as exc:
                     print(f"[alert] swing tick error: {exc}")
                 self._last_swing_ts = time.time()
@@ -913,7 +977,7 @@ class AlertMonitor:
                 self._last_rev_ts is None
                 or (
                     self._market_open(now)
-                    and time.time() - self._last_rev_ts >= SWING_POLL_SECONDS
+                    and time.time() - self._last_rev_ts >= REVERSAL_POLL_SECONDS
                 )
             ):
                 try:
@@ -951,6 +1015,7 @@ class AlertMonitor:
                 except Exception as exc:
                     print(f"[alert] EOD swing tick error: {exc}")
                 self._last_eod_date = now.strftime("%Y-%m-%d")
+                _settings_set("last_eod_date", self._last_eod_date)
                 self.last_swing_poll = now.isoformat(timespec="seconds")
             self._stop.wait(POLL_SECONDS)
 
@@ -1169,7 +1234,8 @@ class AlertMonitor:
                     f" (entered {res['entry_time']} @ {res['entry_price']:.2f})",
                 )
                 if row["broker_order_id"]:
-                    broker.close(sym)   # VWAP touched, or the session ended
+                    # VWAP touched, or the session ended
+                    broker.close(sym, channel="zerodte")
 
 
 MONITOR = AlertMonitor()

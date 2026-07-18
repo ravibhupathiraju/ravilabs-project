@@ -86,6 +86,11 @@ tbody tr:hover { background: rgba(79,142,247,0.055); }
 .warn { color: var(--amber); font-size: 0.85rem; }
 details > summary { user-select: none; }
 details > summary:hover { color: var(--text); }
+.chanPill { display: inline-flex; align-items: center; gap: 0.5rem; font-size: 0.8rem;
+  padding: 0.22rem 0.3rem 0.22rem 0.7rem; border: 1px solid #2a3650; border-radius: 999px; white-space: nowrap; }
+.chanPill .on { color: #4ade80; font-weight: 600; }
+.chanPill .off { color: #fbbf24; font-weight: 600; }
+.chanPill button { padding: 0.12rem 0.6rem; font-size: 0.76rem; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2a3650; border-radius: 6px; border: 2px solid var(--bg); }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -103,7 +108,11 @@ details > summary:hover { color: var(--text); }
     <button class="tab" data-tab="analyzerTab">Analyzer</button>
     <button class="tab" data-tab="patTab">Pattern lab</button>
     <button class="tab" data-tab="miscTab">Misc</button>
+    <button class="tab" data-tab="tvTab">TV strategy tester</button>
   </div>
+  <button id="toastToggle" class="run secondary" data-on="0"
+    style="margin-top:1rem;width:100%;font-size:0.8rem;padding:0.35rem 0.5rem"
+    title="Windows popup notifications for alerts and trades. Trading and logging continue either way.">&#128277; Popups: &hellip;</button>
 </div>
 
 <div class="main">
@@ -160,6 +169,7 @@ details > summary:hover { color: var(--text); }
     <button class="run secondary" id="scanBtn">Scan today</button>
     <button class="run secondary" id="swAlertBtn">Start swing alerts</button>
     <button class="run secondary" id="swStopBtn">Stop monitor</button>
+    <span class="chanPill" data-channel="swing" data-label="Swing paper trades"></span>
     <span class="status" id="status"></span>
   </div>
   <div class="field wide">
@@ -232,6 +242,7 @@ details > summary:hover { color: var(--text); }
     <button class="run" id="zRunBtn">Run 0DTE backtest</button>
     <button class="run" id="zAlertBtn">Start 0DTE monitor</button>
     <button class="run secondary" id="zStopBtn">Stop monitor</button>
+    <span class="chanPill" data-channel="zerodte" data-label="0DTE paper trades"></span>
     <span class="status" id="zStatus"></span>
   </div>
   <div class="field wide">
@@ -285,6 +296,9 @@ details > summary:hover { color: var(--text); }
   <div class="actions">
     <button class="run" id="ahRefreshBtn">Refresh</button>
     <button class="run secondary" id="ahTodayBtn">Today</button>
+    <span class="chanPill" data-channel="swing" data-label="Swing paper trades"></span>
+    <span class="chanPill" data-channel="zerodte" data-label="0DTE paper trades"></span>
+    <span class="chanPill" data-channel="tvtester" data-label="TV tester"></span>
     <span class="status" id="ahStatus"></span>
   </div>
 </div>
@@ -296,6 +310,65 @@ details > summary:hover { color: var(--text); }
 </table>
 <p class="note">Closed trades only, from the filters above (set From = To = one date for a single-day view, or click <b>Today</b>). Click a ticker row (or its <b>+</b>) to expand its per-strategy breakdown. <b>Total P/L %</b> sums per-trade returns (trades are roughly equal-sized, so this tracks the strategy). <b>Paper $ P/L</b> is exact for alerts that placed an Alpaca paper order (shares &times; entry &times; P/L%); alerts without a paper order show &mdash; and are excluded from the $ total. Reversal alerts are informational and never counted.</p>
 
+<h3>Strategy performance <span class="meta">&mdash; broker truth: computed from each strategy's own Alpaca paper account (fills, not alerts)</span></h3>
+<div class="card controls">
+  <div class="field">
+    <label>Accounts / strategies</label>
+    <div class="checks">
+      <label class="check"><input type="checkbox" class="pfChan" value="swing" checked> Swing</label>
+      <label class="check"><input type="checkbox" class="pfChan" value="zerodte" checked> 0DTE</label>
+      <label class="check"><input type="checkbox" class="pfChan" value="tvtester" checked> TV tester</label>
+    </div>
+  </div>
+  <div class="field">
+    <label for="pfStart">From date</label>
+    <input type="date" id="pfStart">
+  </div>
+  <div class="field">
+    <label for="pfEnd">To date</label>
+    <input type="date" id="pfEnd">
+  </div>
+  <div class="field">
+    <label for="pfSyms">Stocks (blank = all)</label>
+    <input type="text" id="pfSyms" placeholder="e.g. AAPL, SPY">
+  </div>
+  <div class="field">
+    <label for="pfStrat">Strategy (blank = all)</label>
+    <select id="pfStrat"><option value="">All strategies</option></select>
+  </div>
+  <div class="actions">
+    <button class="run" id="pfRunBtn">Analyze performance</button>
+    <span class="status" id="pfStatus"></span>
+  </div>
+</div>
+
+<div id="pfResults" style="display:none">
+  <div id="pfTiles" style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:1rem"></div>
+  <div class="charts" style="margin-bottom:1rem">
+    <div class="card">
+      <h3 style="margin-top:0">By strategy</h3>
+      <table><thead><tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Total P/L</th><th>Avg P/L</th><th>Avg %</th></tr></thead>
+      <tbody id="pfStratBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h3 style="margin-top:0">By stock</h3>
+      <table><thead><tr><th>Symbol</th><th>Trades</th><th>Win rate</th><th>Total P/L</th><th>Avg P/L</th><th>Avg %</th></tr></thead>
+      <tbody id="pfSymBody"></tbody></table>
+    </div>
+  </div>
+  <div class="card" id="pfOpenCard" style="display:none;margin-bottom:1rem">
+    <h3 style="margin-top:0">Still open (not in the P/L above)</h3>
+    <table><thead><tr><th>Account</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Since</th><th>Strategy</th></tr></thead>
+    <tbody id="pfOpenBody"></tbody></table>
+  </div>
+  <div class="card" style="margin-bottom:1rem">
+    <h3 style="margin-top:0">Closed round trips <span class="meta" id="pfTradesMeta"></span></h3>
+    <table><thead><tr><th>Exit</th><th>Account</th><th>Strategy</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>In</th><th>Out</th><th>P/L $</th><th>P/L %</th></tr></thead>
+    <tbody id="pfTradesBody"></tbody></table>
+  </div>
+  <p class="note">A <b>round trip</b> pairs entry and exit fills (FIFO) from the broker's own history, so these numbers survive restarts and never depend on local logs. Strategy names come from the order tags each entry carries (<i>untagged</i> = orders placed before tagging, or straight from the Alpaca dashboard). Filter by account, date, stock or strategy above &mdash; the same analysis works identically for all three strategies because each trades its own paper account.</p>
+</div>
+
 <h3>Alert history</h3>
 <table>
   <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Paper</th><th>Status</th></tr></thead>
@@ -303,8 +376,10 @@ details > summary:hover { color: var(--text); }
 </table>
 <p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Monitors are started from their own tabs: 0DTE on <b>0DTE intraday</b>, swing on <b>Swing strategies</b>, bear on <b>Bear strategy</b>, reversals on <b>Analyzer</b>. Educational use only; not financial advice.</p>
 
-<h3>Paper trading (Alpaca)</h3>
-<div class="card" id="brokerBox-a" data-scope="0dte"></div>
+<h3>Paper trading (Alpaca) <span class="meta">&mdash; one dedicated paper account per strategy</span></h3>
+<div class="card" style="margin-bottom:1rem" data-scope="swing"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">Swing account</h4><div class="brokerInner"></div></div>
+<div class="card" style="margin-bottom:1rem" id="brokerBox-a" data-scope="0dte"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">0DTE account</h4><div class="brokerInner"></div></div>
+<div class="card" data-scope="tvtester"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">TV tester account</h4><div class="brokerInner"></div></div>
 </div>
 
 <!-- ============ BEAR STRATEGY TAB ============ -->
@@ -352,6 +427,7 @@ details > summary:hover { color: var(--text); }
     <button class="run secondary" id="bResearchBtn">Run research (weekly)</button>
     <button class="run secondary" id="bAlertBtn">Start bear alerts</button>
     <button class="run secondary" id="bStopBtn">Stop monitor</button>
+    <span class="chanPill" data-channel="swing" data-label="Swing paper trades"></span>
     <span class="status" id="bStatus"></span>
   </div>
   <div class="field wide">
@@ -404,6 +480,7 @@ details > summary:hover { color: var(--text); }
     <button class="run" id="anBtn">Analyze</button>
     <button class="run secondary" id="anRevBtn">Start reversal alerts</button>
     <button class="run secondary" id="anRevStopBtn">Stop monitor</button>
+    <span class="chanPill" data-channel="swing" data-label="Swing paper trades"></span>
     <span class="status" id="anStatus"></span>
   </div>
   <div class="field wide">
@@ -693,6 +770,102 @@ details > summary:hover { color: var(--text); }
   </details>
 </div>
 </div>
+<!-- ============ TV STRATEGY TESTER TAB ============ -->
+<div id="tvTab" style="display:none">
+
+<div class="card" style="margin-bottom:1rem;display:flex;align-items:center;gap:0.9rem;flex-wrap:wrap">
+  <b>Paper trading (this tab)</b> <span class="chanPill" data-channel="tvtester" data-label="TV tester"></span>
+  <span class="note">Armed plans go to the Alpaca <b>paper</b> account as one server-side bracket order &mdash; limit buy at the entry with the stop-loss and take-profit attached &mdash; so the whole plan runs even when this app is closed. All orders from this tab are tagged, and the tables below are built from the broker's own fill history.</span>
+</div>
+
+<div class="charts" style="margin-bottom:1rem">
+  <div class="card">
+    <h3 style="margin-top:0">1 &middot; Paste the recommendation</h3>
+    <textarea id="tvNotes" rows="11" style="width:100%" placeholder="Paste the written plan here, e.g.
+
+Wait for pullback   $82.92-$83.60   Pivot zone + 4H fib 0.236
+Enter swing long    On the bounce off $82.90+
+Stop below          $80
+Target              $95 / $100"></textarea>
+    <div class="actions" style="margin-top:0.6rem">
+      <button class="run" id="tvParseBtn">Parse notes &rarr; plan</button>
+      <span class="status" id="tvParseStatus"></span>
+    </div>
+    <p class="note" id="tvParseWarn" style="margin:0.4rem 0 0"></p>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">2 &middot; Review, then arm</h3>
+    <div class="controls" style="padding:0;border:none;background:none;box-shadow:none">
+      <div class="field"><label for="tvTicker">Ticker</label>
+        <input type="text" id="tvTicker" style="text-transform:uppercase" placeholder="ADM"></div>
+      <div class="field"><label for="tvQty">Qty (shares)</label>
+        <input type="number" id="tvQty" value="10" min="1"></div>
+      <div class="field"><label for="tvEntry">Entry (limit buy)</label>
+        <input type="number" id="tvEntry" step="0.01" placeholder="83.60"></div>
+      <div class="field"><label for="tvStop">Stop loss</label>
+        <input type="number" id="tvStop" step="0.01" placeholder="80.00"></div>
+      <div class="field"><label for="tvTarget">Target (take profit)</label>
+        <input type="number" id="tvTarget" step="0.01" placeholder="95.00"></div>
+    </div>
+    <div class="actions" style="margin-top:0.4rem">
+      <button class="run" id="tvArmBtn">Arm plan &rarr; paper bracket order</button>
+      <span class="status" id="tvArmStatus"></span>
+    </div>
+    <p class="note" style="margin:0.5rem 0 0">Entry is a GTC limit at the <b>top of the pullback zone</b>, so it fills anywhere in the zone on the way down. The stop and target ride along server-side. Multiple targets? Arm with target&nbsp;1; when it fills you can re-arm the rest, or use a manual limit sell for the runner.</p>
+  </div>
+</div>
+
+<div class="card controls" style="margin-bottom:1rem">
+  <div class="field"><label for="tvmTicker">Manual order &mdash; ticker</label>
+    <input type="text" id="tvmTicker" style="text-transform:uppercase" placeholder="AAPL"></div>
+  <div class="field"><label for="tvmSide">Side</label>
+    <select id="tvmSide"><option value="buy">Buy</option><option value="sell">Sell</option></select></div>
+  <div class="field"><label for="tvmQty">Qty</label>
+    <input type="number" id="tvmQty" value="1" min="1"></div>
+  <div class="field"><label for="tvmLimit">Limit price (blank = market)</label>
+    <input type="number" id="tvmLimit" step="0.01" placeholder="market"></div>
+  <div class="actions">
+    <button class="run secondary" id="tvManualBtn">Submit manual order</button>
+    <span class="status" id="tvManualStatus"></span>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Armed plans <span class="meta" id="tvPlansMeta"></span></h3>
+  <table>
+    <thead><tr><th>#</th><th>Ticker</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th><th>Created</th><th>Status</th><th></th></tr></thead>
+    <tbody id="tvPlansBody"><tr><td colspan="10">No plans yet &mdash; parse a note above or fill the form and arm.</td></tr></tbody>
+  </table>
+</div>
+
+<div class="card" id="tvOpenCard" style="display:none;margin-bottom:1rem">
+  <h3 style="margin-top:0">Open positions (from this tab)</h3>
+  <table>
+    <thead><tr><th>Ticker</th><th>Qty</th><th>Avg entry</th><th>Now</th><th>Unrealized P/L</th><th>%</th></tr></thead>
+    <tbody id="tvOpenBody"></tbody>
+  </table>
+</div>
+
+<div class="charts">
+  <div class="card">
+    <h3 style="margin-top:0">All trades (this tab) <span class="meta" id="tvTradesMeta"></span></h3>
+    <table>
+      <thead><tr><th>Submitted</th><th>Ticker</th><th>Side</th><th>Type</th><th>Qty</th><th>Level</th><th>Filled @</th><th>Status</th></tr></thead>
+      <tbody id="tvTradesBody"><tr><td colspan="8">No trades yet.</td></tr></tbody>
+    </table>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0">Closed trades &mdash; P/L by stock</h3>
+    <table>
+      <thead><tr><th>Ticker</th><th>Closed qty</th><th>Avg in</th><th>Avg out</th><th>P/L $</th><th>P/L %</th></tr></thead>
+      <tbody id="tvClosedBody"><tr><td colspan="6">No closed round-trips yet.</td></tr></tbody>
+    </table>
+    <p class="note" style="margin:0.5rem 0 0">A stock appears here once both a buy and a sell have <b>filled</b>; P/L is computed on the matched quantity from the broker's average fill prices.</p>
+  </div>
+</div>
+
+</div>
+
 </div><!-- /main -->
 
 <script>
@@ -705,7 +878,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
@@ -713,6 +886,8 @@ document.querySelectorAll(".tab").forEach((btn) =>
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
     if (btn.dataset.tab === "patTab") { refreshAlertStatus(); refreshArmed(); refreshCacheLine(); }
     if (btn.dataset.tab === "miscTab" && miscChart) miscChart.main.timeScale().fitContent();
+    if (btn.dataset.tab === "tvTab") { loadTv(); }
+    refreshChannels();
   })
 );
 
@@ -1037,6 +1212,10 @@ const BROKER_COPY = {
     off: "Not connected. Create a free paper account at <b>alpaca.markets</b>, copy the API keys from the dashboard (Paper mode), then copy <code>alpaca.example.json</code> to <code>alpaca.json</code> next to webapp.py and paste them in.",
     on: "<b>All five 0DTE strategies alert and log to Alert history, but only the strategies listed below are actually traded</b> (VWAP Reversion by default &mdash; set <code>zerodte_strategies</code> in alpaca.json to change). 0DTE orders are plain <b>day market</b> orders, long or short, sized from <code>zerodte_notional</code>: no bracket, because the VWAP exit is a moving level rather than a fixed price. The monitor closes the position when VWAP is touched, and a 15:55 sweep flattens anything still open &mdash; nothing intraday carries overnight. <b>SPX is alert-only</b> (a cash index, not tradable as an equity); SPY, QQQ and IWM trade normally.",
   },
+  tvtester: {
+    off: "Not connected for the TV-tester channel. Add its keys under <code>accounts.tvtester</code> in <code>alpaca.json</code>.",
+    on: "<b>TV strategy tester</b> plans rest as server-side bracket orders (entry + stop + target) on this dedicated account; manual one-off orders land here too.",
+  },
 };
 
 function brokerPanelHtml(d, scope) {
@@ -1084,11 +1263,15 @@ function brokerPanelHtml(d, scope) {
 
 async function loadBroker() {
   const boxes = document.querySelectorAll("[data-scope]");
+  const paint = (box, html) => ((box.querySelector(".brokerInner") || box).innerHTML = html);
   try {
     const d = await (await fetch("/api/broker/status")).json();
-    boxes.forEach((box) => (box.innerHTML = brokerPanelHtml(d, box.dataset.scope)));
+    // each strategy channel has its own paper account now
+    const byScope = { swing: d.swing, "0dte": d.zerodte, tvtester: d.tvtester };
+    boxes.forEach((box) =>
+      paint(box, brokerPanelHtml(byScope[box.dataset.scope] || { enabled: false }, box.dataset.scope)));
   } catch (e) {
-    boxes.forEach((box) => (box.innerHTML = `<p class="note" style="color:#e5534b">broker status failed: ${e}</p>`));
+    boxes.forEach((box) => paint(box, `<p class="note" style="color:#e5534b">broker status failed: ${e}</p>`));
   }
 }
 
@@ -2381,6 +2564,200 @@ $("anRevBtn").addEventListener("click", async () => {
 $("anRevStopBtn").addEventListener("click", async () => {
   const data = await callApi("/api/alerts/stop", {}, $("anStatus"), [$("anBtn"), $("anRevBtn")]);
   if (data) $("anStatusLine").textContent = "Monitor stopped (all channels: 0DTE, swing, reversals).";
+});
+
+// ================= BROKER CHANNEL PILLS (pause/activate per tab) =================
+function paintChannels(ch) {
+  document.querySelectorAll(".chanPill").forEach((el) => {
+    const name = el.dataset.channel, on = !!ch[name];
+    el.innerHTML = `<span>${el.dataset.label}:</span>` +
+      `<span class="${on ? "on" : "off"}">${on ? "● ACTIVE" : "⏸ PAUSED"}</span>` +
+      `<button class="run secondary">${on ? "Pause" : "Activate"}</button>`;
+    el.querySelector("button").onclick = async () => {
+      const d = await postJson("/api/broker/channels", { channel: name, active: !on });
+      if (d.channels) paintChannels(d.channels);
+    };
+  });
+}
+async function refreshChannels() {
+  try {
+    const d = await (await fetch("/api/broker/channels")).json();
+    paintChannels(d.channels || {});
+  } catch (e) { /* broker offline: pills stay empty */ }
+}
+refreshChannels();
+
+// ---- desktop popup toggle (sidebar). Trades + logging run either way. ----
+function paintToastBtn(on) {
+  const b = $("toastToggle");
+  b.dataset.on = on ? "1" : "0";
+  b.innerHTML = on ? "🔔 Popups: ON — click to silence" : "🔕 Popups: OFF — click to enable";
+  b.style.color = on ? "#4ade80" : "";
+}
+$("toastToggle").addEventListener("click", async () => {
+  const d = await postJson("/api/settings/toasts", { on: $("toastToggle").dataset.on !== "1" });
+  paintToastBtn(d.toasts);
+});
+(async () => {
+  try { paintToastBtn((await (await fetch("/api/settings/toasts")).json()).toasts); }
+  catch (e) { /* leave placeholder */ }
+})();
+
+// ================= TV STRATEGY TESTER TAB =================
+$("tvParseBtn").addEventListener("click", async () => {
+  $("tvParseStatus").textContent = "Parsing...";
+  const p = await postJson("/api/tv/parse", { notes: $("tvNotes").value });
+  $("tvParseStatus").textContent = "";
+  if (p.ticker) $("tvTicker").value = p.ticker;
+  if (p.entry_high) $("tvEntry").value = p.entry_high;
+  if (p.stop) $("tvStop").value = p.stop;
+  if (p.target) $("tvTarget").value = p.target;
+  const bits = [];
+  if (p.summary) bits.push(`<b>${p.summary}</b>`);
+  if (p.entry_low && p.entry_high && p.entry_low !== p.entry_high)
+    bits.push(`Entry zone found: $${p.entry_low}–$${p.entry_high} (limit set to the top; fills anywhere in the zone).`);
+  if (p.target2) bits.push(`Second target $${p.target2} noted — arm covers target 1; manage the runner manually.`);
+  if (p.direction === "short") bits.push(`⚠ This reads as a <b>SHORT</b> plan — Arm places long brackets only; use manual sell orders for shorts.`);
+  if (p.warnings && p.warnings.length) bits.push(`⚠ ${p.warnings.join("; ")}.`);
+  bits.push(`Review the fields on the right, then arm. <span style="opacity:0.7">(parsed by ${p.source || "regex"})</span>`);
+  $("tvParseWarn").innerHTML = bits.join(" ");
+});
+
+$("tvArmBtn").addEventListener("click", async () => {
+  const body = { ticker: $("tvTicker").value, qty: $("tvQty").value, entry: $("tvEntry").value,
+                 stop: $("tvStop").value, target: $("tvTarget").value, notes: $("tvNotes").value };
+  const data = await callApi("/api/tv/plan", body, $("tvArmStatus"), [$("tvArmBtn")]);
+  if (data && data.plan) {
+    $("tvArmStatus").textContent = `Armed: ${data.plan.ticker} buy ${data.plan.qty} @ ${data.plan.entry} ` +
+      `(stop ${data.plan.stop} / target ${data.plan.target}) — order ${data.plan.order_id.slice(0, 8)}`;
+    loadTv();
+  }
+});
+
+$("tvManualBtn").addEventListener("click", async () => {
+  const body = { ticker: $("tvmTicker").value, side: $("tvmSide").value,
+                 qty: $("tvmQty").value, limit: $("tvmLimit").value || null };
+  const data = await callApi("/api/tv/manual", body, $("tvManualStatus"), [$("tvManualBtn")]);
+  if (data && data.order) {
+    $("tvManualStatus").textContent = `Submitted: ${data.order.side} ${data.order.qty} ${data.order.symbol} (${data.order.status})`;
+    loadTv();
+  }
+});
+
+async function tvCancel(id) {
+  await postJson("/api/tv/plan/cancel", { id });
+  loadTv();
+}
+
+const tvMoney = (v) => v == null ? "—" : "$" + (+v).toFixed(2);
+const tvPl = (v) => v == null ? "—" :
+  `<span style="color:${v >= 0 ? "#38c793" : "#e5484d"}">${v >= 0 ? "+" : ""}${(+v).toFixed(2)}</span>`;
+
+async function loadTv() {
+  let d;
+  try { d = await (await fetch("/api/tv/summary")).json(); } catch (e) { return; }
+  if (!d.enabled) {
+    $("tvPlansMeta").textContent = "— Alpaca keys not configured";
+    return;
+  }
+  if (d.error) { $("tvPlansMeta").textContent = "— broker error: " + d.error; return; }
+
+  // plans
+  const plans = d.plans || [];
+  $("tvPlansMeta").textContent = plans.length ? `${plans.length} plan(s)` : "";
+  $("tvPlansBody").innerHTML = plans.length ? plans.map((p) => {
+    const rr = (p.target - p.entry) / Math.max(p.entry - p.stop, 1e-9);
+    const live = ["new", "accepted", "held", "partially_filled", "pending_new"].includes(p.status);
+    return `<tr title="${(p.notes || "").replace(/"/g, "&quot;").slice(0, 400)}">` +
+      `<td>${p.id}</td><td><b>${p.ticker}</b></td><td>${p.qty}</td>` +
+      `<td>${tvMoney(p.entry)}</td><td>${tvMoney(p.stop)}</td><td>${tvMoney(p.target)}</td>` +
+      `<td>${rr.toFixed(1)}:1</td><td>${p.created}</td><td>${p.status}</td>` +
+      `<td>${live ? `<button class="run secondary" style="padding:0.1rem 0.6rem" onclick="tvCancel(${p.id})">Cancel</button>` : ""}</td></tr>`;
+  }).join("") : `<tr><td colspan="10">No plans yet — parse a note above or fill the form and arm.</td></tr>`;
+
+  // open positions
+  const open = d.open || [];
+  $("tvOpenCard").style.display = open.length ? "block" : "none";
+  $("tvOpenBody").innerHTML = open.map((p) =>
+    `<tr><td><b>${p.symbol}</b></td><td>${p.qty}</td><td>${tvMoney(p.avg_entry)}</td>` +
+    `<td>${tvMoney(p.current)}</td><td>${tvPl(p.unrealized_pl)}</td><td>${tvPl(p.unrealized_plpc)}%</td></tr>`
+  ).join("");
+
+  // all trades
+  const trades = d.trades || [];
+  $("tvTradesMeta").textContent = trades.length ? `${trades.length} order(s)` : "";
+  $("tvTradesBody").innerHTML = trades.length ? trades.map((t) =>
+    `<tr><td>${t.submitted_at}</td><td><b>${t.symbol}</b></td><td>${t.side}</td><td>${t.type}</td>` +
+    `<td>${t.qty || t.filled_qty}</td><td>${t.limit_price ? tvMoney(t.limit_price) : (t.stop_price ? "stop " + tvMoney(t.stop_price) : "mkt")}</td>` +
+    `<td>${t.filled_avg_price ? tvMoney(t.filled_avg_price) : "—"}</td><td>${t.status}</td></tr>`
+  ).join("") : `<tr><td colspan="8">No trades yet.</td></tr>`;
+
+  // closed P/L per stock
+  const closed = d.closed || [];
+  $("tvClosedBody").innerHTML = closed.length ? closed.map((c) =>
+    `<tr><td><b>${c.symbol}</b></td><td>${c.closed_qty}</td><td>${tvMoney(c.avg_in)}</td>` +
+    `<td>${tvMoney(c.avg_out)}</td><td>${tvPl(c.pl)}</td><td>${tvPl(c.pl_pct)}%</td></tr>`
+  ).join("") : `<tr><td colspan="6">No closed round-trips yet.</td></tr>`;
+}
+
+// ================= STRATEGY PERFORMANCE (all paper accounts) =================
+function pfTile(label, value, color) {
+  return `<div style="flex:1;min-width:130px;background:var(--card,#141b28);border:1px solid #2a3650;` +
+    `border-radius:10px;padding:0.7rem 0.9rem"><div class="note">${label}</div>` +
+    `<div style="font-size:1.35rem;font-weight:650;${color ? "color:" + color : ""}">${value}</div></div>`;
+}
+
+function pfAggRows(rows, empty) {
+  if (!rows || !rows.length) return `<tr><td colspan="6">${empty}</td></tr>`;
+  return rows.map((r) =>
+    `<tr><td><b>${r.name}</b></td><td>${r.trades}</td><td>${r.win_rate}%</td>` +
+    `<td>${tvPl(r.total_pl)}</td><td>${tvPl(r.avg_pl)}</td><td>${tvPl(r.avg_pl_pct)}%</td></tr>`).join("");
+}
+
+$("pfRunBtn").addEventListener("click", async () => {
+  const body = {
+    channels: [...document.querySelectorAll(".pfChan:checked")].map((c) => c.value),
+    start: $("pfStart").value, end: $("pfEnd").value,
+    symbols: $("pfSyms").value, strategy: $("pfStrat").value,
+  };
+  const d = await callApi("/api/perf", body, $("pfStatus"), [$("pfRunBtn")]);
+  if (!d) return;
+  $("pfResults").style.display = "block";
+
+  const s = d.summary;
+  const err = Object.entries(d.errors || {}).map(([c, e]) => `${c}: ${e}`).join("; ");
+  $("pfTiles").innerHTML =
+    pfTile("Closed trades", s.trades) +
+    pfTile("Win rate", s.win_rate == null ? "—" : s.win_rate + "%") +
+    pfTile("Total P/L", s.total_pl == null ? "—" : "$" + s.total_pl.toFixed(2),
+           s.total_pl >= 0 ? "#38c793" : "#e5484d") +
+    pfTile("Avg / trade", s.avg_pl == null ? "—" : "$" + s.avg_pl.toFixed(2)) +
+    pfTile("Best", s.best == null ? "—" : "$" + s.best.toFixed(2), "#38c793") +
+    pfTile("Worst", s.worst == null ? "—" : "$" + s.worst.toFixed(2), "#e5484d") +
+    (err ? `<div class="note" style="flex-basis:100%;color:#e5534b">Account errors: ${err}</div>` : "");
+
+  $("pfStratBody").innerHTML = pfAggRows(d.by_strategy, "No closed trades in this window.");
+  $("pfSymBody").innerHTML = pfAggRows(d.by_symbol, "No closed trades in this window.");
+
+  // keep the strategy dropdown in sync with what actually traded
+  const cur = $("pfStrat").value;
+  $("pfStrat").innerHTML = `<option value="">All strategies</option>` +
+    (d.strategies || []).map((x) => `<option value="${x}"${x === cur ? " selected" : ""}>${x}</option>`).join("");
+
+  const open = d.open_lots || [];
+  $("pfOpenCard").style.display = open.length ? "block" : "none";
+  $("pfOpenBody").innerHTML = open.map((o) =>
+    `<tr><td>${o.channel}</td><td><b>${o.symbol}</b></td><td>${o.direction}</td><td>${o.qty}</td>` +
+    `<td>${tvMoney(o.entry_price)}</td><td class="note">${o.entry_time}</td><td>${o.strategy}</td></tr>`).join("");
+
+  const tr = d.trades || [];
+  $("pfTradesMeta").textContent = `${d.start} → ${d.end || "now"} · ${tr.length} shown`;
+  $("pfTradesBody").innerHTML = tr.length ? tr.map((t) =>
+    `<tr><td class="note">${t.exit_time.replace("T", " ")}</td><td>${t.channel_label}</td>` +
+    `<td>${t.strategy}</td><td><b>${t.symbol}</b></td><td>${t.direction}</td><td>${t.qty}</td>` +
+    `<td>${tvMoney(t.entry_price)}</td><td>${tvMoney(t.exit_price)}</td>` +
+    `<td>${tvPl(t.pl)}</td><td>${tvPl(t.pl_pct)}%</td></tr>`).join("")
+    : `<tr><td colspan="10">No closed round trips for these filters.</td></tr>`;
 });
 </script>
 </body>
