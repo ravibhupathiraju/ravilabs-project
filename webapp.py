@@ -10,8 +10,8 @@ import re
 from flask import Flask, jsonify, render_template, request
 
 from swingtrader import (
-    alerts, analyzer, backtest, bear, broker, fibdiv, patterns, perf,
-    screener, tracker, tvtester, zerodte,
+    actionplan, alerts, analyzer, backtest, bear, broker, fibdiv, patterns,
+    perf, screener, tracker, tvtester, zerodte,
 )
 from swingtrader.data import parse_duration
 from swingtrader.strategies import STRATEGIES
@@ -269,6 +269,86 @@ def api_tv_summary():
     return jsonify(tvtester.summary())
 
 
+@app.get("/api/tv/autopick")
+def api_tv_autopick_status():
+    from swingtrader.alerts import _settings
+    s = _settings()
+    return jsonify({
+        "enabled": bool(s.get("autopick", True)),
+        "last_date": s.get("last_autopick_date"),
+        "last": s.get("autopick_last"),
+    })
+
+
+@app.post("/api/tv/autopick")
+def api_tv_autopick():
+    """Toggle the morning picker, or run it now ({"run": true, "dry_run": bool})."""
+    from swingtrader import autopick
+    from swingtrader.alerts import _settings, _settings_set
+
+    payload = request.get_json(force=True)
+    if "enabled" in payload:
+        _settings_set("autopick", bool(payload["enabled"]))
+    if payload.get("run"):
+        result = autopick.run(dry_run=bool(payload.get("dry_run")))
+        _settings_set("autopick_last", result)
+        if "error" not in result and not result.get("dry_run"):
+            _settings_set("last_autopick_date",
+                          result["ran_at"][:10])
+        return jsonify({"enabled": bool(_settings().get("autopick", True)),
+                        "last": result})
+    return jsonify({"enabled": bool(_settings().get("autopick", True)),
+                    "last": _settings().get("autopick_last")})
+
+
+@app.get("/api/zerodte/signals")
+def api_zerodte_signals():
+    start = (request.args.get("start") or "").strip()
+    if not start:
+        return jsonify({"error": "start date required"}), 400
+    syms = [s for s in re.split(r"[,\s]+", request.args.get("symbols") or "") if s.strip()]
+    return jsonify(alerts.zerodte_signals(
+        start, (request.args.get("end") or "").strip() or None, syms))
+
+
+@app.get("/api/actionplan")
+def api_actionplan_list():
+    return jsonify(actionplan.list_entries(request.args.get("date") or None))
+
+
+@app.post("/api/actionplan/add")
+def api_actionplan_add():
+    payload = request.get_json(force=True)
+    try:
+        data = actionplan.add(
+            date=payload.get("date"),
+            note=payload.get("note") or "",
+            plan=payload.get("plan") or "",
+            status=payload.get("status"),
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(data)
+
+
+@app.post("/api/actionplan/update")
+def api_actionplan_update():
+    payload = request.get_json(force=True)
+    return jsonify(actionplan.update(
+        int(payload.get("id")),
+        date=payload.get("date"),
+        note=payload.get("note"),
+        plan=payload.get("plan"),
+        status=payload.get("status"),
+    ))
+
+
+@app.post("/api/actionplan/delete")
+def api_actionplan_delete():
+    payload = request.get_json(force=True)
+    return jsonify(actionplan.delete(int(payload.get("id"))))
+
+
 @app.post("/api/perf")
 def api_perf():
     payload = request.get_json(force=True)
@@ -397,6 +477,22 @@ def api_patterns_armed():
 @app.get("/api/patterns/cache")
 def api_patterns_cache():
     return jsonify({"studies": patterns.cached_studies()})
+
+
+@app.get("/api/patterns/backtest")
+def api_patterns_backtest():
+    start = (request.args.get("start") or "").strip()
+    if not start:
+        return jsonify({"error": "start date required"}), 400
+    try:
+        data = patterns.backtest(
+            start=start,
+            end=(request.args.get("end") or "").strip() or None,
+            ticker=(request.args.get("ticker") or "").strip() or None,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(data)
 
 
 @app.post("/api/patterns/disarm")

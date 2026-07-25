@@ -15,9 +15,13 @@ The most consistently documented same-day edges on index products:
    during the session.
 5. Expected-Move Straddle Sell (proxy): the most popular real 0DTE options
    trade is selling the expected move at the open (condors/straddles) and
-   letting theta decay. Modeled here as: premium = 0.8 x 20-day realized
-   1-sigma daily move; PnL = premium - |open-to-close move| (in % of the
-   underlying).
+   letting theta decay. Modeled here as: credit = 0.8 x 20-day realized
+   1-sigma daily move; an intraday gamma-stop (via the day's high/low)
+   closes the trade for a loss if the underlying runs 1.5x the credit from
+   the open, otherwise it is held to the close for credit - |move|, less a
+   round-trip friction either way. The stop is what makes the win rate and
+   tail losses realistic -- an open-to-close-only model hides every "run
+   over then recovered" day and prints a fantasy ~100% win rate.
 
 Data limitations: free intraday data (yfinance) covers only ~60 days of
 5-minute bars, so intraday strategies are clipped to that window. Gap Fade
@@ -31,13 +35,22 @@ from dataclasses import asdict, dataclass
 import pandas as pd
 import yfinance as yf
 
+from . import marketdata
+
 SYMBOLS = {"SPY": "SPY", "SPX": "^GSPC", "QQQ": "QQQ", "IWM": "IWM"}
-INTRADAY_MAX_DAYS = 55  # yfinance 5m history limit is ~60 days
+INTRADAY_MAX_DAYS = 55  # yfinance 5m fallback limit (~60 days) for cash indices
 
 GAP_THRESHOLD = 0.003        # 0.3% overnight gap to trigger a fade
 VWAP_DEV_THRESHOLD = 0.003   # 0.3% stretch from VWAP to trigger reversion
 MOMENTUM_MIN_MOVE = 0.0015   # 0.15% first-30-min move to trigger momentum
 STRADDLE_PREMIUM_MULT = 0.8  # straddle premium ~ 0.8 x 1-sigma expected move
+# A short straddle is short gamma: as the underlying runs away from the strike
+# intraday the loss accelerates, so a real seller stops out well before the
+# close. Model that with an intraday gamma-stop keyed off the day's high/low --
+# without it the open-to-close-only PnL hides every "run over then came back"
+# day and prints a fantasy ~100% win rate.
+STRADDLE_STOP_MULT = 1.5     # stop when the intraday move from the open reaches 1.5x the credit (~1.2 sigma; trips ~25% of days)
+STRADDLE_COST = 0.15         # round-trip options friction (spread + slippage) as a fraction of the credit
 
 
 @dataclass
@@ -264,6 +277,18 @@ def _gap_fade(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
 
 
 def _straddle_sell(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrade]:
+    """Short ATM straddle at the open, theta-decay to the close -- with an
+    intraday gamma-stop so getting run over midday costs real money.
+
+    Per day: collect a credit ~= 0.8 x the 1-sigma expected move. The
+    breakeven distance from the open equals that credit. Using the day's
+    high/low, take the worst one-sided excursion from the open (MAE); if it
+    reaches STRADDLE_STOP_MULT x the credit distance, the position is stopped
+    out intraday for a loss -- regardless of where it closes (the key fix:
+    the old model only saw open-to-close and never registered these). Days
+    that never hit the stop are held to the close for premium - |move|. A
+    round-trip friction (spread + slippage) is charged either way.
+    """
     trades = []
     sigma = daily["Close"].pct_change().rolling(20).std().shift(1)  # known at open
     for ts in daily.index:
@@ -272,9 +297,29 @@ def _straddle_sell(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrad
         s = sigma.loc[ts]
         if pd.isna(s):
             continue
-        o, c = float(daily["Open"].loc[ts]), float(daily["Close"].loc[ts])
-        move = abs(c / o - 1.0)
-        pnl = float((STRADDLE_PREMIUM_MULT * s - move) * 100.0)
+        o = float(daily["Open"].loc[ts])
+        h = float(daily["High"].loc[ts])
+        lo = float(daily["Low"].loc[ts])
+        c = float(daily["Close"].loc[ts])
+
+        premium = STRADDLE_PREMIUM_MULT * s          # credit = breakeven distance
+        stop_move = STRADDLE_STOP_MULT * premium     # excursion that trips the stop
+        up, dn = h / o - 1.0, 1.0 - lo / o
+        mae = max(up, dn)                            # worst one-sided move from the open
+
+        if mae >= stop_move:
+            # Short gamma stop: intrinsic loss beyond the credit, plus friction.
+            loss = (stop_move - premium) + premium * STRADDLE_COST
+            pnl = float(-loss * 100.0)
+            stop_price = o * (1.0 + stop_move) if up >= dn else o * (1.0 - stop_move)
+            exit_time, exit_price = "intraday (gamma stop)", stop_price
+        else:
+            move = abs(c / o - 1.0)
+            net_credit = premium * (1.0 - STRADDLE_COST)   # spread eats part of the credit
+            pnl = float((net_credit - move) * 100.0)
+            stop_price = o * (1.0 + stop_move)
+            exit_time, exit_price = "16:00 (close)", c
+
         trades.append(
             DayTrade(
                 strategy=DAILY_LABELS["straddle"],
@@ -283,16 +328,44 @@ def _straddle_sell(daily: pd.DataFrame, start, end, symbol: str) -> list[DayTrad
                 direction="short_vol",
                 entry_time="09:30 (open)",
                 entry_price=o,
-                exit_time="16:00 (close)",
-                exit_price=c,
+                exit_time=exit_time,
+                exit_price=round(exit_price, 2),
                 pnl_pct=pnl,
+                stop_price=round(stop_price, 2),
             )
         )
     return trades
 
 
+def _intraday_range(yf_sym: str, start: pd.Timestamp, end: pd.Timestamp):
+    """5-minute session bars over [start, end], regular hours only.
+
+    Uses Alpaca IEX -- the SAME real-time feed the live monitor trades on, with
+    years of history -- via the read-only market-data endpoint (never the paper
+    trading account). Cash indices like ^GSPC aren't on Alpaca, so those fall
+    back to yfinance automatically (still ~60-day limited). Returns
+    (df, source, clipped).
+    """
+    today = pd.Timestamp.today().normalize()
+    span = max((today - start).days + 2, 1)
+    df = marketdata.bars(yf_sym, "5Min", days=span)
+    source = df.attrs.get("source", "?") if not df.empty else "none"
+    clipped = source != "alpaca" and start < (today - pd.Timedelta(days=INTRADAY_MAX_DAYS))
+    if df.empty:
+        return df, source, clipped
+    df = df[(df.index >= start) & (df.index < end + pd.Timedelta(days=1))]
+    return df, source, clipped
+
+
 def run(symbols: list[str], strategies: list[str], start=None, end=None) -> dict:
-    """Backtest the selected 0DTE strategies per symbol over [start, end]."""
+    """Backtest the selected 0DTE strategies per symbol over [start, end].
+
+    Intraday strategies (ORB / VWAP / Momentum) are replayed with the EXACT
+    evaluators the live monitor uses (``alerts._eval_intraday`` -- VWAP and ORB
+    re-enter after each exit; open positions flatten at the session close), on
+    Alpaca bars, so a completed session's backtest matches what the monitor
+    logged live. Daily strategies (gap fade / straddle) use daily bars.
+    """
     end = pd.Timestamp(end) if end else pd.Timestamp.today().normalize()
     start = pd.Timestamp(start) if start else end - pd.Timedelta(days=30)
     if start > end:
@@ -300,6 +373,10 @@ def run(symbols: list[str], strategies: list[str], start=None, end=None) -> dict
     strategies = [s for s in strategies if s in STRATEGY_LABELS] or list(STRATEGY_LABELS)
     need_intraday = [s for s in strategies if s in INTRADAY]
     need_daily = [s for s in strategies if s in DAILY_LABELS]
+
+    # Same evaluators the live monitor runs (re-entry + EOD flatten). Imported
+    # lazily: alerts imports this module, so a top-level import would cycle.
+    from . import alerts
 
     rows, notes = [], set()
     for sym in symbols:
@@ -309,21 +386,25 @@ def run(symbols: list[str], strategies: list[str], start=None, end=None) -> dict
         trades_by: dict[str, list[DayTrade]] = {name: [] for name in strategies}
 
         if need_intraday:
-            bars, clipped = load_intraday(yf_sym, start, end)
+            bars, source, clipped = _intraday_range(yf_sym, start, end)
             if clipped:
                 notes.add(
-                    f"Intraday strategies are limited to the last ~{INTRADAY_MAX_DAYS} days "
-                    "of free 5-minute data; the date range was clipped for them."
+                    f"{sym}: intraday history from {source} only reaches ~{INTRADAY_MAX_DAYS} "
+                    "days back (cash indices have no Alpaca feed); older dates were clipped."
                 )
             if not bars.empty:
                 for date, day in bars.groupby(bars.index.date):
                     for name in need_intraday:
-                        label, func = INTRADAY[name]
-                        res = func(day)
-                        if res:
-                            trades_by[name].append(
-                                DayTrade(strategy=label, symbol=sym, date=str(date), **res)
-                            )
+                        # session_over=True -> anything still open exits at the
+                        # session's last bar, modelling the 16:00 flatten
+                        for res in alerts._eval_intraday(name, day, session_over=True):
+                            trades_by[name].append(DayTrade(
+                                strategy=STRATEGY_LABELS[name], symbol=sym, date=str(date),
+                                direction=res["direction"], entry_time=res["entry_time"],
+                                entry_price=res["entry_price"], exit_time=res["exit_time"],
+                                exit_price=res["exit_price"], pnl_pct=res["pnl_pct"],
+                                stop_price=res.get("stop_price"),
+                            ))
 
         if need_daily:
             daily = load_daily(yf_sym, start, end)

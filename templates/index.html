@@ -109,6 +109,7 @@ details > summary:hover { color: var(--text); }
     <button class="tab" data-tab="patTab">Pattern lab</button>
     <button class="tab" data-tab="miscTab">Misc</button>
     <button class="tab" data-tab="tvTab">TV strategy tester</button>
+    <button class="tab" data-tab="actionPlanTab">Action plan</button>
   </div>
   <button id="toastToggle" class="run secondary" data-on="0"
     style="margin-top:1rem;width:100%;font-size:0.8rem;padding:0.35rem 0.5rem"
@@ -262,7 +263,7 @@ details > summary:hover { color: var(--text); }
     <div class="card"><canvas id="zwr"></canvas></div>
     <div class="card"><canvas id="zex"></canvas></div>
   </div>
-  <p class="note">All trades open and close the same session. PnL is in % of the underlying move; the straddle sell is a volatility proxy, not real option prices (true 0DTE options backtests require paid historical options data). Intraday strategies (ORB, VWAP, Momentum) are limited to ~60 days of free 5-minute data; Gap Fade and the straddle proxy work for any date range. Educational use only; not financial advice.</p>
+  <p class="note">All trades open and close the same session. PnL is in % of the underlying move. The <b>straddle sell is a volatility proxy, not real option prices</b>: it sells a credit &asymp; 0.8&sigma; at the open and applies an <b>intraday gamma-stop</b> (using the day's high/low) that takes a real loss when the index runs 1.5&times; the credit from the open, plus a round-trip friction &mdash; so the win rate (&asymp;60% over a long window) and tail losses are realistic rather than the &infin; profit factor an open-to-close-only model would show. It still omits true implied-vol pricing and exact spreads (that needs paid options data), so treat it as directional research. Over a short calm window it can still print very high win rates &mdash; that is genuine, not a bug; view a longer date range to see the real edge. Intraday strategies (ORB, VWAP, Momentum) replay the <b>exact live-monitor logic on Alpaca's real-time feed</b> (the same feed live trades use, with 1&ndash;2 years of history) &mdash; VWAP/ORB re-enter after each exit and open positions flatten at the close, so a completed session's backtest <b>matches what the monitor logged live</b> and fills in the days the monitor was off. This is read-only market data; running a backtest never places paper orders. Cash indices (SPX/^GSPC) have no Alpaca feed and fall back to ~60 days of yfinance 5-minute data. Gap Fade and the straddle proxy use daily bars and work for any date range. Educational use only; not financial advice.</p>
 </div>
 </div>
 
@@ -303,14 +304,7 @@ details > summary:hover { color: var(--text); }
   </div>
 </div>
 
-<h3>P/L summary <span id="ahSumMeta" class="meta"></span></h3>
-<table>
-  <thead><tr><th>Symbol</th><th>Closed trades</th><th>Wins</th><th>Total P/L %</th><th>Avg P/L %</th><th>Paper $ P/L</th><th>Open / signals</th></tr></thead>
-  <tbody id="ahSumBody"><tr><td colspan="7">No closed trades in the selected range.</td></tr></tbody>
-</table>
-<p class="note">Closed trades only, from the filters above (set From = To = one date for a single-day view, or click <b>Today</b>). Click a ticker row (or its <b>+</b>) to expand its per-strategy breakdown. <b>Total P/L %</b> sums per-trade returns (trades are roughly equal-sized, so this tracks the strategy). <b>Paper $ P/L</b> is exact for alerts that placed an Alpaca paper order (shares &times; entry &times; P/L%); alerts without a paper order show &mdash; and are excluded from the $ total. Reversal alerts are informational and never counted.</p>
-
-<h3>Strategy performance <span class="meta">&mdash; broker truth: computed from each strategy's own Alpaca paper account (fills, not alerts)</span></h3>
+<h3>💰 Strategy performance — the answer to "am I making money?" <span class="meta">one number per strategy: realized + still-open, computed from each strategy's own Alpaca account fills</span></h3>
 <div class="card controls">
   <div class="field">
     <label>Accounts / strategies</label>
@@ -318,6 +312,7 @@ details > summary:hover { color: var(--text); }
       <label class="check"><input type="checkbox" class="pfChan" value="swing" checked> Swing</label>
       <label class="check"><input type="checkbox" class="pfChan" value="zerodte" checked> 0DTE</label>
       <label class="check"><input type="checkbox" class="pfChan" value="tvtester" checked> TV tester</label>
+      <label class="check"><input type="checkbox" class="pfChan" value="pattern" checked> Pattern</label>
     </div>
   </div>
   <div class="field">
@@ -344,42 +339,54 @@ details > summary:hover { color: var(--text); }
 
 <div id="pfResults" style="display:none">
   <div id="pfTiles" style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:1rem"></div>
+  <p class="note" style="margin:-0.6rem 0 1rem"><b>Realized</b> = closed trades only (locked in). <b>Unrealized</b> = still-open positions marked to the current price (can still change). <b>Combined</b> = the true picture right now. Nothing here can be negative or positive by accident — it is 100% sourced from each strategy's own broker account.</p>
   <div class="charts" style="margin-bottom:1rem">
     <div class="card">
-      <h3 style="margin-top:0">By strategy</h3>
-      <table><thead><tr><th>Strategy</th><th>Trades</th><th>Win rate</th><th>Total P/L</th><th>Avg P/L</th><th>Avg %</th></tr></thead>
+      <h3 style="margin-top:0">By strategy <span class="meta">the key question: which strategy is actually working?</span></h3>
+      <table><thead><tr><th>Strategy</th><th>Closed</th><th>Win rate</th><th>Realized</th><th>Open</th><th>Unrealized</th><th>Combined</th></tr></thead>
       <tbody id="pfStratBody"></tbody></table>
     </div>
     <div class="card">
       <h3 style="margin-top:0">By stock</h3>
-      <table><thead><tr><th>Symbol</th><th>Trades</th><th>Win rate</th><th>Total P/L</th><th>Avg P/L</th><th>Avg %</th></tr></thead>
+      <table><thead><tr><th>Symbol</th><th>Closed</th><th>Win rate</th><th>Realized</th><th>Open</th><th>Unrealized</th><th>Combined</th></tr></thead>
       <tbody id="pfSymBody"></tbody></table>
     </div>
   </div>
   <div class="card" id="pfOpenCard" style="display:none;margin-bottom:1rem">
-    <h3 style="margin-top:0">Still open (not in the P/L above)</h3>
-    <table><thead><tr><th>Account</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Since</th><th>Strategy</th></tr></thead>
+    <h3 style="margin-top:0">Open positions <span class="meta">already counted in Unrealized above &mdash; this is the detail</span></h3>
+    <table><thead><tr><th>Account</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>Entry</th><th>Current</th><th>Unrealized P/L</th><th>Since</th><th>Strategy</th></tr></thead>
     <tbody id="pfOpenBody"></tbody></table>
   </div>
-  <div class="card" style="margin-bottom:1rem">
-    <h3 style="margin-top:0">Closed round trips <span class="meta" id="pfTradesMeta"></span></h3>
-    <table><thead><tr><th>Exit</th><th>Account</th><th>Strategy</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>In</th><th>Out</th><th>P/L $</th><th>P/L %</th></tr></thead>
+  <details class="card" style="margin-bottom:1rem">
+    <summary style="cursor:pointer;font-weight:600">Closed round trips (detail) <span class="meta" id="pfTradesMeta"></span></summary>
+    <table style="margin-top:0.6rem"><thead><tr><th>Exit</th><th>Account</th><th>Strategy</th><th>Symbol</th><th>Dir</th><th>Qty</th><th>In</th><th>Out</th><th>P/L $</th><th>P/L %</th></tr></thead>
     <tbody id="pfTradesBody"></tbody></table>
-  </div>
-  <p class="note">A <b>round trip</b> pairs entry and exit fills (FIFO) from the broker's own history, so these numbers survive restarts and never depend on local logs. Strategy names come from the order tags each entry carries (<i>untagged</i> = orders placed before tagging, or straight from the Alpaca dashboard). Filter by account, date, stock or strategy above &mdash; the same analysis works identically for all three strategies because each trades its own paper account.</p>
-</div>
+  </details>
+  <p class="note">A <b>round trip</b> pairs entry and exit fills (FIFO) from the broker's own history, so these numbers survive restarts and never depend on local logs. Strategy names come from the order tags each entry carries (<i>untagged</i> = orders placed before tagging, or straight from the Alpaca dashboard, e.g. manual test orders). Filter by account, date, stock or strategy above &mdash; the same analysis works identically for all three strategies because each trades its own paper account.</p>
 
-<h3>Alert history</h3>
-<table>
-  <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Paper</th><th>Status</th></tr></thead>
-  <tbody id="ahBody"><tr><td colspan="15">No alerts recorded yet.</td></tr></tbody>
-</table>
-<p class="note">Every desktop alert is recorded here. Open trades show their planned exit; exit price and P/L fill in when the trade closes (stop hit, target/condition met, or 16:00 close). There is no one-alert-per-day limit: after an ORB stop-out or a VWAP exit, the next signal the same day fires a fresh alert (the <b>#</b> column numbers them). P/L is in % of the underlying move. Monitors are started from their own tabs: 0DTE on <b>0DTE intraday</b>, swing on <b>Swing strategies</b>, bear on <b>Bear strategy</b>, reversals on <b>Analyzer</b>. Educational use only; not financial advice.</p>
+  <details class="card" style="margin:1rem 0" id="zsigCard">
+    <summary style="cursor:pointer;font-weight:600">0DTE signals &mdash; executed &amp; shadow <span class="meta" id="zsigMeta"></span></summary>
+    <p id="zsigSummary" class="note" style="margin:0.6rem 0"></p>
+    <table style="margin-top:0.4rem"><thead><tr><th>Date</th><th>Entry</th><th>Symbol</th><th>Strategy</th><th>Dir</th><th>In</th><th>Out</th><th>P/L %</th><th>P/L $ (hypo)</th><th>Sent to Alpaca</th></tr></thead>
+    <tbody id="zsigBody"><tr><td colspan="10" class="note">Run "Analyze performance" to load the 0DTE signal log.</td></tr></tbody></table>
+    <p class="note" style="margin:0.6rem 0 0">From the app's own <b>signal log</b>, not the broker &mdash; so it shows the <b>shadow</b> trades too. <b>Sent to Alpaca = Yes</b>: a real paper order went out. <b>No</b>: logged only &mdash; the 2nd+ signal for that ticker that day (the <b>one-live-trade-per-ticker-per-day</b> cap), an alert-only strategy, or SPX. Prices are the live 5-min signal prices (not fills) and <b>P/L $ is hypothetical</b> at the standard 0DTE size, so real and shadow compare on equal footing. For real broker money use <b>Closed round trips</b> above.</p>
+  </details>
+</div>
 
 <h3>Paper trading (Alpaca) <span class="meta">&mdash; one dedicated paper account per strategy</span></h3>
 <div class="card" style="margin-bottom:1rem" data-scope="swing"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">Swing account</h4><div class="brokerInner"></div></div>
 <div class="card" style="margin-bottom:1rem" id="brokerBox-a" data-scope="0dte"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">0DTE account</h4><div class="brokerInner"></div></div>
+<div class="card" style="margin-bottom:1rem" data-scope="pattern"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">Pattern account</h4><div class="brokerInner"></div></div>
 <div class="card" data-scope="tvtester"><h4 style="margin:0 0 0.4rem;color:#9aa3b5">TV tester account</h4><div class="brokerInner"></div></div>
+
+<details class="card" style="margin-top:1rem">
+  <summary style="cursor:pointer;font-weight:600">Raw signal &amp; alert log (detail) <span class="meta">every desktop alert, including swing signals not yet filled &mdash; for $ / % P/L use Strategy performance above</span></summary>
+  <p class="note" style="margin-top:0.6rem">This is the unfiltered event log: every desktop alert this app ever raised, including swing <b>signals</b> that haven't filled yet (no broker order, no P/L). It's useful for auditing exactly what fired and when (stop levels, planned exits) &mdash; but it is <b>not</b> where to read P/L: a swing "signal" row can sit here for days before it fills or never fills at all, so summing this table double-counts against reality. <b>Strategy performance</b> above is the one broker-truth number.</p>
+  <table style="margin-top:0.6rem">
+    <thead><tr><th>Date</th><th>Alert time</th><th>Type</th><th>Symbol</th><th>Strategy</th><th>#</th><th>Dir</th><th>Entry time</th><th>Entry price</th><th>Stop</th><th>Exit time</th><th>Exit price</th><th>P/L</th><th>Paper</th><th>Status</th></tr></thead>
+    <tbody id="ahBody"><tr><td colspan="15">No alerts recorded yet.</td></tr></tbody>
+  </table>
+</details>
 </div>
 
 <!-- ============ BEAR STRATEGY TAB ============ -->
@@ -632,13 +639,73 @@ details > summary:hover { color: var(--text); }
       <button class="run" id="patArmBtn">Arm &amp; start alerts</button>
       <button class="run secondary" id="patLiveBtn">Check live now</button>
       <button class="run secondary" id="patDisarmBtn">Stop all alerts</button>
+      <span class="chanPill" data-channel="pattern" data-label="Pattern paper trades"></span>
       <span class="status" id="patArmStatus"></span>
     </div>
   </div>
-  <p class="note" style="margin-top:0.5rem"><b>Separate from the deep dive above.</b> Arming looks up the <b>cached study</b> for these exact settings (ticker + target + lookback + decision points + min samples) and saves every pattern at or above your win% cutoff &mdash; it does <b>not</b> re-run a study that already exists (compute it once via <b>Run deep dive</b>, or arming will compute &amp; cache it the first time). The monitor then checks <b>each armed ticker</b> against <b>its own</b> patterns every 5 minutes in market hours, fires a toast, and logs to <b>Alerts / Trades</b> (kind <b>Pattern</b>). Arm several tickers &mdash; all are watched. Alert-only; no paper order.</p>
+  <p class="note" style="margin-top:0.5rem"><b>Separate from the deep dive above.</b> Arming looks up the <b>cached study</b> for these exact settings (ticker + target + lookback + decision points + min samples) and saves every pattern at or above your win% cutoff &mdash; it does <b>not</b> re-run a study that already exists (compute it once via <b>Run deep dive</b>, or arming will compute &amp; cache it the first time). The monitor then checks <b>each armed ticker</b> against <b>its own</b> patterns every 5 minutes in market hours, fires a toast, and logs to <b>Alerts / Trades</b> (kind <b>Pattern</b>). Arm several tickers &mdash; all are watched.</p>
+  <p class="note" style="margin:0.3rem 0 0"><b>Paper trading:</b> when the <b>Pattern paper trades</b> pill above is <b>ACTIVE</b>, each live match also sends a market order to the Pattern strategy's <b>own dedicated Alpaca paper account</b> ($5,000 per trade), flattened at the &plusmn;$ barrier or the 16:00 close &mdash; nothing carries overnight. Because it has its own account it never collides with 0DTE, even on the same symbol. These fills roll up in <b>Alerts / Trades &rarr; Strategy performance</b> under the <b>Pattern</b> account, and every match is tracked in <b>Pattern alerts fired</b> below regardless. Pause the pill for alert-only. SPX is alert-only (a cash index).</p>
   <p class="note" style="margin:0.3rem 0 0"><b>One armed study per ticker:</b> re-arming a ticker (e.g. the same ticker at a different lookback) <b>replaces</b> its previously armed set &mdash; the monitor never mixes two studies of the same ticker, so a live condition can't double-alert from both. All its cached studies stay on disk, so switching back is instant.</p>
   <p class="note" id="patCacheLine" style="margin:0.3rem 0 0"></p>
   <div id="patArmedBox"></div>
+</div>
+
+<div class="card" style="margin-top:1rem">
+  <div style="display:flex;align-items:center;gap:1.2rem;flex-wrap:wrap">
+    <h3 style="margin:0">Pattern alerts fired <span class="meta" id="patHistMeta"></span></h3>
+    <div class="actions" style="margin:0;gap:1rem">
+      <label class="note" style="cursor:pointer"><input type="radio" name="patView" value="fired" checked> Live fired</label>
+      <label class="note" style="cursor:pointer"><input type="radio" name="patView" value="backtest"> Backtest armed</label>
+    </div>
+  </div>
+
+  <!-- View 1: live fired alerts (what actually fired while the monitor ran) -->
+  <div id="patFiredView">
+    <div class="actions" style="margin:0.6rem 0 0.5rem;flex-wrap:wrap">
+      <label class="note">From <input type="date" id="patHistStart"></label>
+      <label class="note">Ticker <input type="text" id="patHistSym" placeholder="all" style="width:90px;text-transform:uppercase"></label>
+      <button class="run secondary" id="patHistBtn">Refresh</button>
+    </div>
+    <p id="patHistSummary" style="margin:0 0 0.6rem"></p>
+    <table>
+      <thead><tr><th>Date</th><th>Fired</th><th>Ticker</th><th>Pattern</th><th>Dir</th><th>Hist win%</th><th>Entry</th><th>Target</th><th>Stop</th><th>Exit</th><th>Result</th><th>P/L</th></tr></thead>
+      <tbody id="patHistBody"><tr><td colspan="12">No pattern alerts yet.</td></tr></tbody>
+    </table>
+    <p class="note">Every armed-pattern match lands here automatically (same rows as Alerts/Trades &rarr; type <b>Pattern</b>, shown here so the lab tracks its own results). <b>Result</b>: <i>target</i> = the +$ barrier hit first (a win) &middot; <i>stop</i> = the &minus;$ barrier first &middot; <i>stop_ambig</i> = both barriers inside one 5-min poll, counted as a loss to stay conservative &middot; <i>session_close</i> = neither barrier by 16:00, P/L is wherever it closed. <b>Hist win%</b> is what the study predicted for that pattern &mdash; the realized win rate in the summary above tells you whether the edge is holding up live. Alert-only: these are tracked signals, not paper orders. <b>These are only days the monitor was running</b> &mdash; use <b>Backtest armed</b> for days it was off.</p>
+  </div>
+
+  <!-- View 2: backtest the currently armed patterns over any past date(s) -->
+  <div id="patBtView" style="display:none">
+    <div class="actions" style="margin:0.6rem 0 0.5rem;flex-wrap:wrap">
+      <label class="note">From <input type="date" id="patBtStart"></label>
+      <label class="note">To <input type="date" id="patBtEnd"></label>
+      <label class="note">Ticker <input type="text" id="patBtSym" placeholder="all armed" style="width:90px;text-transform:uppercase"></label>
+      <button class="run" id="patBtBtn">Run backtest</button>
+      <span class="status" id="patBtStatus"></span>
+    </div>
+    <p id="patBtSummary" style="margin:0 0 0.6rem"></p>
+    <div class="actions" id="patBtGroupRow" style="margin:0 0 0.5rem;gap:1rem;display:none">
+      <label class="note" style="cursor:pointer"><input type="radio" name="patBtGroup" value="pattern" checked> By pattern</label>
+      <label class="note" style="cursor:pointer"><input type="radio" name="patBtGroup" value="trigger"> Every trigger</label>
+    </div>
+
+    <!-- Grouped: one row per armed pattern, realized vs predicted over the range -->
+    <div id="patBtPatWrap">
+      <table>
+        <thead><tr><th>Ticker</th><th>Pattern</th><th>Dir</th><th>Triggers</th><th>Win rate</th><th>Predicted</th><th>Edge</th><th>Dates fired</th><th>Avg mins</th></tr></thead>
+        <tbody id="patBtPatBody"><tr><td colspan="9" class="note">Pick a date (or a From/To range) and Run backtest.</td></tr></tbody>
+      </table>
+    </div>
+
+    <!-- Every trigger, chronological -->
+    <div id="patBtDetailWrap" style="display:none">
+      <table>
+        <thead><tr><th>Date</th><th>Time</th><th>Ticker</th><th>Pattern</th><th>Dir</th><th>Hist win%</th><th>Result</th><th>Mins</th></tr></thead>
+        <tbody id="patBtBody"><tr><td colspan="8" class="note">Pick a date (or a From/To range) and Run backtest.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="note"><b>What-if replay</b> of the patterns you have <b>armed right now</b> &mdash; independent of whether the monitor was actually running. For every armed ticker it replays the <b>same logic the live monitor uses</b>: it walks each session's 5-minute bars from ~10:00 ET (opening range done + 7 bars) to the 16:00 close, rebuilds the identical live snapshot at each bar with no look-ahead, and fires a pattern the first time its conditions match that day (once per pattern per day, like the monitor). Each fire is settled to its &plusmn;$ barrier or the close &mdash; <b>Result</b> means the same as the live table (<i>target</i> = a win). This reproduces the fired alerts on days the monitor ran and fills in the days it was off. It can slightly <i>over</i>count vs live because it checks every bar even if the monitor missed a poll. <b>By pattern</b> rolls the triggers up per armed pattern so you can see which ones actually held up over these dates: <b>Win rate</b> = realized target-hit % on the chosen day(s), <b>Predicted</b> = what the study expected, <b>Edge</b> = realized &minus; predicted (green = beat the study). Small trigger counts are noisy &mdash; weight the ones with more samples.</p>
+  </div>
 </div>
 </div>
 
@@ -831,10 +898,21 @@ Target              $95 / $100"></textarea>
 </div>
 
 <div class="card" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Gemini morning auto-picker <span class="chanPill" id="apPill" style="margin-left:0.4rem"></span></h3>
+  <p class="note" style="margin:0.2rem 0 0.6rem">Every weekday at <b>6:15 AM PST</b> (before the open) the scanner shortlists bullish setups from your watchlist, Gemini picks <b>at most 2 A+ setups</b> (or none — it never forces a trade), guardrails re-validate the levels, and they are armed as paper brackets tagged <b>gemini-auto</b>. Your pasted TradingView plans are tagged <b>tv-plan</b> — the Strategy performance view scores the two sources against each other.</p>
+  <div class="actions">
+    <button class="run secondary" id="apRunDryBtn">Dry run now (no orders)</button>
+    <button class="run secondary" id="apRunBtn">Run for real now</button>
+    <span class="status" id="apStatus"></span>
+  </div>
+  <p class="note" id="apLast" style="margin:0.5rem 0 0"></p>
+</div>
+
+<div class="card" style="margin-bottom:1rem">
   <h3 style="margin-top:0">Armed plans <span class="meta" id="tvPlansMeta"></span></h3>
   <table>
-    <thead><tr><th>#</th><th>Ticker</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th><th>Created</th><th>Status</th><th></th></tr></thead>
-    <tbody id="tvPlansBody"><tr><td colspan="10">No plans yet &mdash; parse a note above or fill the form and arm.</td></tr></tbody>
+    <thead><tr><th>#</th><th>Source</th><th>Ticker</th><th>Qty</th><th>Entry</th><th>Stop</th><th>Target</th><th>R:R</th><th>Created</th><th>Status</th><th></th></tr></thead>
+    <tbody id="tvPlansBody"><tr><td colspan="11">No plans yet &mdash; parse a note above or fill the form and arm.</td></tr></tbody>
   </table>
 </div>
 
@@ -864,13 +942,57 @@ Target              $95 / $100"></textarea>
   </div>
 </div>
 
+</div><!-- /tvTab -->
+
+<!-- ===== Action plan: its own sidebar tab (after TV strategy tester) ===== -->
+<div id="actionPlanTab" style="display:none">
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Action plan <span class="meta">&mdash; date-stamped notes, what you'll do about them, and where each stands</span></h3>
+
+  <div class="controls" style="padding:0;border:none;background:none;box-shadow:none;align-items:flex-start">
+    <div class="field" style="max-width:170px">
+      <label for="aplanDate">Date</label>
+      <input type="date" id="aplanDate">
+    </div>
+    <div class="field" style="flex:1;min-width:220px">
+      <label for="aplanNote">Note (what you saw)</label>
+      <textarea id="aplanNote" rows="3" style="width:100%" placeholder="e.g. ADM broke out of its pivot zone on strong volume; 4H trend turning up."></textarea>
+    </div>
+    <div class="field" style="flex:1;min-width:220px">
+      <label for="aplanPlan">Action plan (what you'll do)</label>
+      <textarea id="aplanPlan" rows="3" style="width:100%" placeholder="e.g. Arm a swing long on a pullback to $83; stop $80, target $95."></textarea>
+    </div>
+    <div class="field" style="max-width:150px">
+      <label for="aplanStatus">Status</label>
+      <select id="aplanStatus"></select>
+    </div>
+    <div class="actions" style="align-self:flex-end">
+      <button class="run" id="aplanAddBtn">Add entry</button>
+      <button class="run secondary" id="aplanCancelBtn" style="display:none">Cancel</button>
+      <span class="status" id="aplanStatusMsg"></span>
+    </div>
+  </div>
+
+  <div class="actions" style="margin:0.8rem 0 0.4rem;flex-wrap:wrap;gap:0.6rem">
+    <label class="note">Show date <input type="date" id="aplanFilterDate"></label>
+    <button class="run secondary" id="aplanAllBtn" style="padding:0.2rem 0.7rem;font-size:0.85rem">All dates</button>
+    <span class="note" id="aplanDateChips" style="display:flex;gap:0.4rem;flex-wrap:wrap;align-items:center"></span>
+  </div>
+
+  <table>
+    <thead><tr><th style="width:110px">Date</th><th>Note</th><th>Action plan</th><th style="width:130px">Status</th><th style="width:120px">Updated</th><th style="width:120px"></th></tr></thead>
+    <tbody id="aplanBody"><tr><td colspan="6" class="note">No entries yet &mdash; add a dated note above.</td></tr></tbody>
+  </table>
+  <p class="note" style="margin:0.5rem 0 0">Each entry is saved to <code>action_plan.json</code> and survives restarts. Pick a <b>Show date</b> to see just that day's notes, or <b>All dates</b> for everything (newest first). Change a row's <b>Status</b> inline; use <b>Edit</b> to revise the note/plan/date.</p>
 </div>
+</div><!-- /actionPlanTab -->
 
 </div><!-- /main -->
 
 <script>
 const $ = (id) => document.getElementById(id);
 const KIND_LABEL = { swing: "Swing", "0dte": "0DTE", pattern: "Pattern", reversal: "Reversal" };
+const CHANNEL_LABEL = { swing: "Swing", zerodte: "0DTE", tvtester: "TV tester" };
 let wrChart, exChart, zwrChart, zexChart;
 
 // --- Tabs ---
@@ -878,15 +1000,16 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab", "actionPlanTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
     if (btn.dataset.tab === "alertTab") { refreshAlertStatus(); loadAlertHistory(); loadBroker(); }
     if (btn.dataset.tab === "bearTab") { refreshAlertStatus(); loadBearPerformance(); loadBearHistory(); }
-    if (btn.dataset.tab === "patTab") { refreshAlertStatus(); refreshArmed(); refreshCacheLine(); }
+    if (btn.dataset.tab === "patTab") { refreshAlertStatus(); refreshArmed(); refreshCacheLine(); loadPatHistory(); }
     if (btn.dataset.tab === "miscTab" && miscChart) miscChart.main.timeScale().fitContent();
-    if (btn.dataset.tab === "tvTab") { loadTv(); }
+    if (btn.dataset.tab === "tvTab") { loadTv(); apRefresh(); }
+    if (btn.dataset.tab === "actionPlanTab") aplanRefresh();
     refreshChannels();
   })
 );
@@ -1216,6 +1339,10 @@ const BROKER_COPY = {
     off: "Not connected for the TV-tester channel. Add its keys under <code>accounts.tvtester</code> in <code>alpaca.json</code>.",
     on: "<b>TV strategy tester</b> plans rest as server-side bracket orders (entry + stop + target) on this dedicated account; manual one-off orders land here too.",
   },
+  pattern: {
+    off: "Not connected for the Pattern channel. Add its keys under <code>accounts.pattern</code> in <code>alpaca.json</code>.",
+    on: "<b>Pattern lab</b> live matches trade this dedicated account as plain day-market orders ($5,000 each), flattened at the &plusmn;$ barrier or the 16:00 close &mdash; nothing carries overnight. Armed and paused from the <b>Pattern lab</b> tab.",
+  },
 };
 
 function brokerPanelHtml(d, scope) {
@@ -1267,7 +1394,7 @@ async function loadBroker() {
   try {
     const d = await (await fetch("/api/broker/status")).json();
     // each strategy channel has its own paper account now
-    const byScope = { swing: d.swing, "0dte": d.zerodte, tvtester: d.tvtester };
+    const byScope = { swing: d.swing, "0dte": d.zerodte, tvtester: d.tvtester, pattern: d.pattern };
     boxes.forEach((box) =>
       paint(box, brokerPanelHtml(byScope[box.dataset.scope] || { enabled: false }, box.dataset.scope)));
   } catch (e) {
@@ -1287,7 +1414,6 @@ async function loadAlertHistory() {
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "request failed");
     $("ahStatus").textContent = "";
-    renderAlertSummary(data.alerts);
     const tbody = $("ahBody");
     tbody.innerHTML = "";
     if (!data.alerts.length) {
@@ -1324,86 +1450,6 @@ $("ahTodayBtn").addEventListener("click", () => {
   $("ahStart").valueAsDate = today;
   $("ahEnd").valueAsDate = today;
   loadAlertHistory();
-});
-
-// P/L rollup of the filtered alerts: per-ticker rows (expandable to per-strategy
-// sub-rows) + a totals row. Percentages sum per-trade returns; dollars are exact
-// where a paper order was placed (qty x entry x P/L%). Reversal alerts skipped.
-function renderAlertSummary(alerts) {
-  const blank = () => ({ closed: 0, wins: 0, pnl: 0, dollars: 0, hasD: false, open: 0 });
-  const accum = (b, a) => {
-    if (a.status === "closed" && a.pnl_pct !== null) {
-      b.closed++;
-      if (a.pnl_pct > 0) b.wins++;
-      b.pnl += a.pnl_pct;
-      if (a.broker_qty && a.entry_price) {
-        b.dollars += a.broker_qty * a.entry_price * a.pnl_pct / 100;
-        b.hasD = true;
-      }
-    } else {
-      b.open++;
-    }
-  };
-  const by = {};
-  for (const a of alerts) {
-    if (a.kind === "reversal") continue;
-    const t = by[a.symbol] || (by[a.symbol] = { tot: blank(), strats: {} });
-    const label = a.strategy_label || a.strategy || "—";
-    const s = t.strats[label] || (t.strats[label] = blank());
-    accum(t.tot, a);
-    accum(s, a);
-  }
-  $("ahSumMeta").textContent =
-    $("ahStart").value === $("ahEnd").value ? `(${$("ahStart").value})` : `(${$("ahStart").value} → ${$("ahEnd").value})`;
-  const body = $("ahSumBody");
-  const rows = Object.entries(by).filter(([, t]) => t.tot.closed || t.tot.open);
-  if (!rows.length) {
-    body.innerHTML = `<tr><td colspan="7">No trades in the selected range.</td></tr>`;
-    return;
-  }
-  rows.sort((x, y) => y[1].tot.pnl - x[1].tot.pnl);
-  const pct = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v >= 0 ? "+" : ""}${v.toFixed(2)}%</span>`;
-  const usd = (v) => `<span style="color:${v >= 0 ? "#38c793" : "#e5534b"}">${v < 0 ? "-" : "+"}$${Math.abs(v).toFixed(2)}</span>`;
-  // The five stat cells shared by ticker rows, strategy sub-rows and the total.
-  const cells = (b, bold) => {
-    const w = (s) => (bold ? `<b>${s}</b>` : s);
-    return `<td>${w(b.closed)}</td>` +
-      `<td>${w(b.closed ? `${b.wins}/${b.closed}` : "&mdash;")}</td>` +
-      `<td>${w(b.closed ? pct(b.pnl) : "&mdash;")}</td>` +
-      `<td>${w(b.closed ? pct(b.pnl / b.closed) : "&mdash;")}</td>` +
-      `<td>${w(b.hasD ? usd(b.dollars) : "&mdash;")}</td><td>${w(b.open || "&mdash;")}</td>`;
-  };
-  const tot = blank();
-  const html = rows.map(([sym, t]) => {
-    const b = t.tot;
-    tot.closed += b.closed; tot.wins += b.wins; tot.pnl += b.pnl; tot.open += b.open;
-    if (b.hasD) { tot.dollars += b.dollars; tot.hasD = true; }
-    const strats = Object.entries(t.strats).filter(([, s]) => s.closed || s.open)
-      .sort((x, y) => y[1].pnl - x[1].pnl);
-    const parent =
-      `<tr class="sum-parent" data-sym="${sym}" style="cursor:pointer">` +
-      `<td><span class="sum-toggle" style="display:inline-block;width:1.1em;color:#7c8aa5">+</span><b>${sym}</b></td>` +
-      cells(b, false) + `</tr>`;
-    const kids = strats.map(([label, s]) =>
-      `<tr class="sum-child sum-child-${sym}" style="display:none;background:#141b26">` +
-      `<td style="padding-left:1.8em;color:#9aa3b5">${label}</td>` +
-      cells(s, false) + `</tr>`).join("");
-    return parent + kids;
-  }).join("");
-  body.innerHTML = html +
-    `<tr style="border-top:2px solid #2a3444"><td><b>TOTAL</b></td>` + cells(tot, true) + `</tr>`;
-}
-
-// Expand/collapse a ticker's per-strategy breakdown (event delegation).
-$("ahSumBody").addEventListener("click", (e) => {
-  const row = e.target.closest(".sum-parent");
-  if (!row) return;
-  const sym = row.dataset.sym;
-  const kids = document.querySelectorAll(".sum-child-" + CSS.escape(sym));
-  const open = kids.length && kids[0].style.display !== "none";
-  kids.forEach((k) => { k.style.display = open ? "none" : "table-row"; });
-  const tog = row.querySelector(".sum-toggle");
-  if (tog) tog.textContent = open ? "+" : "−";
 });
 
 // ================= PATTERN LAB TAB =================
@@ -1512,6 +1558,166 @@ $("patDisarmBtn").addEventListener("click", async () => {
 });
 
 $("patLiveBtn").addEventListener("click", refreshArmed);
+
+// ---- Pattern alert history: the lab tracks its own fired alerts ----
+async function loadPatHistory() {
+  const params = new URLSearchParams({ kind: "pattern" });
+  if ($("patHistStart").value) params.set("start", $("patHistStart").value);
+  const sym = $("patHistSym").value.trim().toUpperCase();
+  if (sym) params.set("symbols", sym);
+  let rows;
+  try {
+    rows = (await (await fetch("/api/alerts/history?" + params)).json()).alerts || [];
+  } catch (e) { return; }
+
+  $("patHistMeta").textContent = rows.length ? `${rows.length} alert(s)` : "";
+  const histWin = (r) => {
+    const m = /\((\d+(?:\.\d+)?)% hist/.exec(r.planned_exit || "");
+    return m ? +m[1] : null;
+  };
+
+  const closed = rows.filter((r) => r.status === "closed");
+  const wins = closed.filter((r) => r.exit_reason === "target");
+  if (closed.length) {
+    const realized = (100 * wins.length) / closed.length;
+    const preds = closed.map(histWin).filter((x) => x != null);
+    const predicted = preds.length ? preds.reduce((a, b) => a + b, 0) / preds.length : null;
+    const avgPl = closed.reduce((a, r) => a + (r.pnl_pct || 0), 0) / closed.length;
+    const col = realized >= (predicted ?? 50) ? "#38c793" : "#eab308";
+    $("patHistSummary").innerHTML =
+      `<b>${closed.length}</b> settled · target hit <b>${wins.length}</b> ` +
+      `(<b style="color:${col}">${realized.toFixed(0)}% realized</b>` +
+      (predicted != null ? ` vs ${predicted.toFixed(0)}% predicted by the studies` : "") +
+      `) · avg P/L ${avgPl >= 0 ? "+" : ""}${avgPl.toFixed(2)}%` +
+      (rows.length > closed.length ? ` · ${rows.length - closed.length} still open` : "");
+  } else {
+    $("patHistSummary").innerHTML =
+      rows.length ? `${rows.length} fired, none settled yet.` : "";
+  }
+
+  $("patHistBody").innerHTML = rows.length ? rows.map((r) => {
+    const hw = histWin(r);
+    const res = r.status !== "closed" ? "open"
+      : r.exit_reason === "target" ? `<span style="color:#38c793">target ✓</span>`
+      : r.exit_reason === "session_close" ? "session close"
+      : `<span style="color:#e5534b">${r.exit_reason}</span>`;
+    const pl = r.pnl_pct == null ? "—"
+      : `<span style="color:${r.pnl_pct >= 0 ? "#38c793" : "#e5534b"}">${r.pnl_pct >= 0 ? "+" : ""}${r.pnl_pct.toFixed(2)}%</span>`;
+    return `<tr><td>${r.date}</td><td class="note">${(r.alert_time || "").slice(0, 5)}</td>` +
+      `<td><b>${r.symbol}</b></td><td>${r.strategy}</td><td>${r.direction}</td>` +
+      `<td>${hw != null ? hw + "%" : "—"}</td>` +
+      `<td>${r.entry_price != null ? r.entry_price.toFixed(2) : "—"}</td>` +
+      `<td>${r.target_price != null ? r.target_price.toFixed(2) : "—"}</td>` +
+      `<td>${r.stop_price != null ? r.stop_price.toFixed(2) : "—"}</td>` +
+      `<td class="note">${r.exit_time || "—"}${r.exit_price != null ? " @ " + r.exit_price.toFixed(2) : ""}</td>` +
+      `<td>${res}</td><td>${pl}</td></tr>`;
+  }).join("") : `<tr><td colspan="12">No pattern alerts in this range — they appear here as soon as an armed pattern matches live conditions.</td></tr>`;
+}
+$("patHistBtn").addEventListener("click", loadPatHistory);
+// default window: last 30 days
+$("patHistStart").value = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
+
+// ---- Toggle: live fired alerts vs. what-if backtest of armed patterns ----
+document.querySelectorAll('input[name="patView"]').forEach((rb) =>
+  rb.addEventListener("change", () => {
+    const bt = rb.value === "backtest" && rb.checked;
+    $("patFiredView").style.display = bt ? "none" : "";
+    $("patBtView").style.display = bt ? "" : "none";
+  }));
+
+// ---- Backtest: how many armed patterns WOULD have triggered on given date(s) ----
+async function runPatBacktest() {
+  const start = $("patBtStart").value;
+  if (!start) { $("patBtStatus").textContent = "Pick a From date."; return; }
+  const params = new URLSearchParams({ start });
+  if ($("patBtEnd").value) params.set("end", $("patBtEnd").value);
+  const sym = $("patBtSym").value.trim().toUpperCase();
+  if (sym) params.set("ticker", sym);
+
+  $("patBtStatus").textContent = "Running…";
+  let d;
+  try {
+    d = await (await fetch("/api/patterns/backtest?" + params)).json();
+  } catch (e) { $("patBtStatus").textContent = "Failed."; return; }
+  $("patBtStatus").textContent = "";
+  if (d.error) { $("patBtStatus").textContent = d.error; return; }
+
+  if (!d.armed) {
+    $("patBtSummary").innerHTML = `<span class="note">Nothing is armed${sym ? " for " + sym : ""} — arm a ticker above first, then backtest it.</span>`;
+    $("patBtGroupRow").style.display = "none";
+    $("patBtBody").innerHTML = `<tr><td colspan="8" class="note">No armed patterns.</td></tr>`;
+    $("patBtPatBody").innerHTML = `<tr><td colspan="9" class="note">No armed patterns.</td></tr>`;
+    return;
+  }
+
+  const s = d.summary || {}, trigs = d.triggers || [];
+  const range = d.start === d.end ? d.start : `${d.start} → ${d.end}`;
+  const perTk = (d.per_ticker || []).map((t) =>
+    t.error ? `<b>${t.ticker}</b> — ${t.error}`
+      : `<b>${t.ticker}</b> ${t.triggers} in ${t.sessions} session${t.sessions === 1 ? "" : "s"}`).join(" &middot; ");
+
+  if (s.total) {
+    const col = s.realized_pct >= (s.predicted_pct ?? 50) ? "#38c793" : "#eab308";
+    const rb = s.results || {};
+    const bits = Object.keys(rb).sort().map((k) => `${k} ${rb[k]}`).join(" · ");
+    $("patBtSummary").innerHTML =
+      `<b>${s.total}</b> would-be trigger(s) across <b>${s.sessions}</b> session(s) over ${range} · ` +
+      `target hit <b>${s.wins}</b> (<b style="color:${col}">${s.realized_pct}% realized</b>` +
+      (s.predicted_pct != null ? ` vs ${s.predicted_pct}% predicted` : "") + `) · ${bits}` +
+      `<br><span class="note">${perTk}</span>`;
+  } else {
+    $("patBtSummary").innerHTML =
+      `<span class="note">No armed pattern would have triggered over ${range}. ${perTk}</span>`;
+  }
+
+  $("patBtGroupRow").style.display = s.total ? "flex" : "none";
+
+  // Per-pattern rollup (which armed patterns actually held up over these days)
+  const pats = d.by_pattern || [];
+  // each date the pattern fired, colored by result (green target / red loss /
+  // grey session-close), with the fire time and result in a hover tooltip
+  const dateChips = (dates) => (dates || []).map((x) => {
+    const col = x.win ? "#38c793" : x.result === "session_close" ? "#9aa3b5" : "#e5534b";
+    const mark = x.win ? "✓" : x.result === "session_close" ? "•" : "✗";
+    return `<span title="${x.tod} — ${x.result}" style="color:${col};white-space:nowrap">${x.date.slice(5)} ${mark}</span>`;
+  }).join(" · ");
+  $("patBtPatBody").innerHTML = pats.length ? pats.map((p) => {
+    const rp = p.realized_pct;
+    const wcol = rp == null ? "#c7d0e0" : rp >= 60 ? "#38c793" : rp >= 45 ? "#eab308" : "#e5534b";
+    const edge = p.edge == null ? "—"
+      : `<span style="color:${p.edge >= 0 ? "#38c793" : "#e5534b"}">${p.edge >= 0 ? "+" : ""}${p.edge}</span>`;
+    return `<tr><td><b>${p.ticker}</b></td><td>${p.label}</td>` +
+      `<td>${p.side === "long" ? "▲ long" : "▼ short"}</td>` +
+      `<td>${p.triggers}</td>` +
+      `<td><b style="color:${wcol}">${rp != null ? rp + "%" : "—"}</b> <span class="note">(${p.wins}/${p.triggers})</span></td>` +
+      `<td>${p.predicted_pct != null ? p.predicted_pct + "%" : "—"}</td>` +
+      `<td>${edge}</td><td class="note">${dateChips(p.dates)}</td>` +
+      `<td class="note">${p.avg_mins == null ? "—" : p.avg_mins}</td></tr>`;
+  }).join("") : `<tr><td colspan="9" class="note">No armed pattern matched on the selected session(s).</td></tr>`;
+
+  $("patBtBody").innerHTML = trigs.length ? trigs.map((t) => {
+    const res = t.result === "target" ? `<span style="color:#38c793">target ✓</span>`
+      : t.result === "session_close" ? "session close"
+      : `<span style="color:#e5534b">${t.result}</span>`;
+    return `<tr><td>${t.date}</td><td class="note">${t.tod}</td>` +
+      `<td><b>${t.ticker}</b></td><td>${t.label}</td>` +
+      `<td>${t.side === "long" ? "▲ long" : "▼ short"}</td>` +
+      `<td>${t.win_pct != null ? t.win_pct + "%" : "—"}</td>` +
+      `<td>${res}</td><td class="note">${t.mins == null ? "—" : t.mins}</td></tr>`;
+  }).join("") : `<tr><td colspan="8" class="note">No armed pattern matched on the selected session(s).</td></tr>`;
+}
+
+// Toggle between the per-pattern rollup and the chronological trigger list
+document.querySelectorAll('input[name="patBtGroup"]').forEach((rb) =>
+  rb.addEventListener("change", () => {
+    const byPat = rb.value === "pattern" && rb.checked;
+    $("patBtPatWrap").style.display = byPat ? "" : "none";
+    $("patBtDetailWrap").style.display = byPat ? "none" : "";
+  }));
+
+$("patBtBtn").addEventListener("click", runPatBacktest);
+// default: backtest today (single day)
+$("patBtStart").value = new Date().toISOString().slice(0, 10);
 
 async function refreshArmed() {
   try {
@@ -2649,6 +2855,147 @@ async function tvCancel(id) {
   loadTv();
 }
 
+// ---- Gemini morning auto-picker card ----
+function apPaint(d) {
+  const on = d.enabled;
+  $("apPill").innerHTML =
+    `<span class="${on ? "on" : "off"}">${on ? "● ON — 6:15 AM PST weekdays" : "⏸ OFF"}</span>` +
+    `<button class="run secondary">${on ? "Disable" : "Enable"}</button>`;
+  $("apPill").querySelector("button").onclick = async () => {
+    apPaint(await postJson("/api/tv/autopick", { enabled: !on }));
+  };
+  const L = d.last;
+  if (!L) { $("apLast").textContent = "No runs yet."; return; }
+  const bits = [`<b>Last run ${L.ran_at}${L.dry_run ? " (dry run)" : ""}:</b>`];
+  if (L.error) bits.push(`<span style="color:#e5534b">${L.error}</span>`);
+  else if (L.note) bits.push(L.note);
+  if (L.candidates) bits.push(`shortlist: ${L.candidates.join(", ") || "—"}.`);
+  (L.armed || []).forEach((a) => bits.push(
+    `<span style="color:#38c793">ARMED${a.dry_run ? " (dry)" : ""}: ${a.ticker} ${a.qty} @ ${a.entry} / stop ${a.stop} / target ${a.target}</span>.`));
+  if ((L.rejected || []).length) bits.push(`<span style="color:#eab308">rejected: ${L.rejected.join("; ")}</span>`);
+  $("apLast").innerHTML = bits.join(" ");
+}
+async function apRefresh() {
+  try { apPaint(await (await fetch("/api/tv/autopick")).json()); } catch (e) {}
+}
+$("apRunDryBtn").addEventListener("click", async () => {
+  $("apStatus").textContent = "Scanning + asking Gemini (can take ~a minute)...";
+  const d = await postJson("/api/tv/autopick", { run: true, dry_run: true });
+  $("apStatus").textContent = ""; apPaint(d);
+});
+$("apRunBtn").addEventListener("click", async () => {
+  $("apStatus").textContent = "Scanning + asking Gemini (can take ~a minute)...";
+  const d = await postJson("/api/tv/autopick", { run: true });
+  $("apStatus").textContent = ""; apPaint(d); loadTv();
+});
+
+// ===== Action plan: date-stamped notes + action plan + status =====
+const APLAN_STATUS = { open: "Open", in_progress: "In progress", done: "Done", cancelled: "Cancelled" };
+const aplanColor = (s) => ({ open: "#9aa3b5", in_progress: "#4c9ffe", done: "#38c793", cancelled: "#e5484d" }[s] || "#9aa3b5");
+const aplanEsc = (v) => (v == null ? "" : String(v)).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const aplanText = (v) => aplanEsc(v).replace(/\n/g, "<br>") || "<span class='note'>—</span>";
+let aplanEditId = null;
+
+function aplanStatusSelect(id, current, klass) {
+  const opts = Object.entries(APLAN_STATUS)
+    .map(([k, v]) => `<option value="${k}"${k === current ? " selected" : ""}>${v}</option>`).join("");
+  return `<select data-id="${id}" class="${klass}" style="color:${aplanColor(current)}">${opts}</select>`;
+}
+
+async function aplanRefresh() {
+  // populate the add-form status dropdown once
+  const sel = $("aplanStatus");
+  if (sel && !sel.options.length)
+    sel.innerHTML = Object.entries(APLAN_STATUS).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
+  if ($("aplanDate") && !$("aplanDate").value) $("aplanDate").value = new Date().toISOString().slice(0, 10);
+
+  const fd = $("aplanFilterDate").value;
+  let d;
+  try { d = await (await fetch("/api/actionplan" + (fd ? "?date=" + fd : ""))).json(); }
+  catch (e) { return; }
+  aplanRender(d);
+}
+
+function aplanRender(d) {
+  // date chips (each date that has entries) for quick date-wise navigation
+  const chips = (d.dates || []).map((dt) =>
+    `<button class="run secondary aplanChip" data-date="${dt}" style="padding:0.15rem 0.55rem;font-size:0.8rem;${dt === d.filter_date ? "outline:2px solid #4c9ffe" : ""}">${dt}</button>`).join("");
+  $("aplanDateChips").innerHTML = (d.dates || []).length
+    ? `<span>dates:</span>${chips}` : "";
+  $("aplanDateChips").querySelectorAll(".aplanChip").forEach((b) =>
+    b.addEventListener("click", () => { $("aplanFilterDate").value = b.dataset.date; aplanRefresh(); }));
+
+  const rows = d.entries || [];
+  $("aplanBody").innerHTML = rows.length ? rows.map((r) =>
+    `<tr>` +
+    `<td><b>${r.date}</b></td>` +
+    `<td>${aplanText(r.note)}</td>` +
+    `<td>${aplanText(r.plan)}</td>` +
+    `<td>${aplanStatusSelect(r.id, r.status, "aplanRowStatus")}</td>` +
+    `<td class="note">${(r.updated || "").slice(0, 10)}</td>` +
+    `<td><button class="run secondary aplanEdit" data-id="${r.id}" style="padding:0.12rem 0.5rem;font-size:0.8rem">Edit</button> ` +
+    `<button class="run secondary aplanDel" data-id="${r.id}" style="padding:0.12rem 0.5rem;font-size:0.8rem">Del</button></td>` +
+    `</tr>`).join("")
+    : `<tr><td colspan="6" class="note">No entries${d.filter_date ? " for " + d.filter_date : ""} — add a dated note above.</td></tr>`;
+
+  // inline status change -> save immediately
+  $("aplanBody").querySelectorAll(".aplanRowStatus").forEach((s) =>
+    s.addEventListener("change", async () => {
+      await postJson("/api/actionplan/update", { id: +s.dataset.id, status: s.value });
+      aplanRefresh();
+    }));
+  $("aplanBody").querySelectorAll(".aplanDel").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Delete this entry?")) return;
+      aplanRender(await postJson("/api/actionplan/delete", { id: +b.dataset.id }));
+    }));
+  $("aplanBody").querySelectorAll(".aplanEdit").forEach((b) =>
+    b.addEventListener("click", () => {
+      const r = rows.find((x) => x.id === +b.dataset.id);
+      if (!r) return;
+      aplanEditId = r.id;
+      $("aplanDate").value = r.date;
+      $("aplanNote").value = r.note || "";
+      $("aplanPlan").value = r.plan || "";
+      $("aplanStatus").value = r.status;
+      $("aplanAddBtn").textContent = "Save changes";
+      $("aplanCancelBtn").style.display = "";
+      $("aplanNote").focus();
+    }));
+}
+
+function aplanResetForm() {
+  aplanEditId = null;
+  $("aplanNote").value = "";
+  $("aplanPlan").value = "";
+  $("aplanStatus").value = "open";
+  $("aplanAddBtn").textContent = "Add entry";
+  $("aplanCancelBtn").style.display = "none";
+  $("aplanStatusMsg").textContent = "";
+}
+
+$("aplanAddBtn").addEventListener("click", async () => {
+  const body = {
+    date: $("aplanDate").value,
+    note: $("aplanNote").value,
+    plan: $("aplanPlan").value,
+    status: $("aplanStatus").value,
+  };
+  if (!body.note.trim() && !body.plan.trim()) {
+    $("aplanStatusMsg").textContent = "Add a note or an action plan.";
+    return;
+  }
+  const url = aplanEditId ? "/api/actionplan/update" : "/api/actionplan/add";
+  if (aplanEditId) body.id = aplanEditId;
+  const d = await postJson(url, body);
+  if (d.error) { $("aplanStatusMsg").textContent = d.error; return; }
+  aplanResetForm();
+  aplanRender(d);
+});
+$("aplanCancelBtn").addEventListener("click", aplanResetForm);
+$("aplanFilterDate").addEventListener("change", aplanRefresh);
+$("aplanAllBtn").addEventListener("click", () => { $("aplanFilterDate").value = ""; aplanRefresh(); });
+
 const tvMoney = (v) => v == null ? "—" : "$" + (+v).toFixed(2);
 const tvPl = (v) => v == null ? "—" :
   `<span style="color:${v >= 0 ? "#38c793" : "#e5484d"}">${v >= 0 ? "+" : ""}${(+v).toFixed(2)}</span>`;
@@ -2668,12 +3015,15 @@ async function loadTv() {
   $("tvPlansBody").innerHTML = plans.length ? plans.map((p) => {
     const rr = (p.target - p.entry) / Math.max(p.entry - p.stop, 1e-9);
     const live = ["new", "accepted", "held", "partially_filled", "pending_new"].includes(p.status);
+    const src = p.source === "gemini"
+      ? `<span style="color:#7aa2ff">gemini-auto</span>`
+      : `<span style="color:#38c793">tv-plan</span>`;
     return `<tr title="${(p.notes || "").replace(/"/g, "&quot;").slice(0, 400)}">` +
-      `<td>${p.id}</td><td><b>${p.ticker}</b></td><td>${p.qty}</td>` +
+      `<td>${p.id}</td><td>${src}</td><td><b>${p.ticker}</b></td><td>${p.qty}</td>` +
       `<td>${tvMoney(p.entry)}</td><td>${tvMoney(p.stop)}</td><td>${tvMoney(p.target)}</td>` +
       `<td>${rr.toFixed(1)}:1</td><td>${p.created}</td><td>${p.status}</td>` +
       `<td>${live ? `<button class="run secondary" style="padding:0.1rem 0.6rem" onclick="tvCancel(${p.id})">Cancel</button>` : ""}</td></tr>`;
-  }).join("") : `<tr><td colspan="10">No plans yet — parse a note above or fill the form and arm.</td></tr>`;
+  }).join("") : `<tr><td colspan="11">No plans yet — parse a note above or fill the form and arm.</td></tr>`;
 
   // open positions
   const open = d.open || [];
@@ -2707,11 +3057,18 @@ function pfTile(label, value, color) {
     `<div style="font-size:1.35rem;font-weight:650;${color ? "color:" + color : ""}">${value}</div></div>`;
 }
 
-function pfAggRows(rows, empty) {
-  if (!rows || !rows.length) return `<tr><td colspan="6">${empty}</td></tr>`;
+// Combined rows show realized (closed) + unrealized (open) + the sum, so a
+// strategy/stock that's all still-open (no closed trades) still shows up
+// with a meaningful number instead of a wall of dashes.
+function pfCombinedRows(rows, empty) {
+  if (!rows || !rows.length) return `<tr><td colspan="7">${empty}</td></tr>`;
   return rows.map((r) =>
-    `<tr><td><b>${r.name}</b></td><td>${r.trades}</td><td>${r.win_rate}%</td>` +
-    `<td>${tvPl(r.total_pl)}</td><td>${tvPl(r.avg_pl)}</td><td>${tvPl(r.avg_pl_pct)}%</td></tr>`).join("");
+    `<tr><td><b>${r.name}</b></td><td>${r.closed_trades || "—"}</td>` +
+    `<td>${r.win_rate == null ? "—" : r.win_rate + "%"}</td>` +
+    `<td>${r.closed_trades ? tvPl(r.realized_pl) : "—"}</td>` +
+    `<td>${r.open_positions || "—"}</td>` +
+    `<td>${r.open_positions ? tvPl(r.unrealized_pl) : "—"}</td>` +
+    `<td><b>${tvPl(r.combined_pl)}</b></td></tr>`).join("");
 }
 
 $("pfRunBtn").addEventListener("click", async () => {
@@ -2727,17 +3084,21 @@ $("pfRunBtn").addEventListener("click", async () => {
   const s = d.summary;
   const err = Object.entries(d.errors || {}).map(([c, e]) => `${c}: ${e}`).join("; ");
   $("pfTiles").innerHTML =
+    pfTile("Realized P/L", s.total_pl == null ? "—" : "$" + s.total_pl.toFixed(2),
+           s.total_pl >= 0 ? "#38c793" : "#e5484d") +
+    pfTile("Unrealized P/L", s.unrealized_pl == null ? "—" : "$" + s.unrealized_pl.toFixed(2),
+           (s.unrealized_pl || 0) >= 0 ? "#38c793" : "#e5484d") +
+    pfTile("Combined P/L", "$" + s.combined_pl.toFixed(2),
+           s.combined_pl >= 0 ? "#38c793" : "#e5484d") +
     pfTile("Closed trades", s.trades) +
     pfTile("Win rate", s.win_rate == null ? "—" : s.win_rate + "%") +
-    pfTile("Total P/L", s.total_pl == null ? "—" : "$" + s.total_pl.toFixed(2),
-           s.total_pl >= 0 ? "#38c793" : "#e5484d") +
-    pfTile("Avg / trade", s.avg_pl == null ? "—" : "$" + s.avg_pl.toFixed(2)) +
-    pfTile("Best", s.best == null ? "—" : "$" + s.best.toFixed(2), "#38c793") +
-    pfTile("Worst", s.worst == null ? "—" : "$" + s.worst.toFixed(2), "#e5484d") +
+    pfTile("Open positions", s.open_positions) +
+    pfTile("Best / Worst (closed)", (s.best == null ? "—" : "$" + s.best.toFixed(2)) +
+           " / " + (s.worst == null ? "—" : "$" + s.worst.toFixed(2))) +
     (err ? `<div class="note" style="flex-basis:100%;color:#e5534b">Account errors: ${err}</div>` : "");
 
-  $("pfStratBody").innerHTML = pfAggRows(d.by_strategy, "No closed trades in this window.");
-  $("pfSymBody").innerHTML = pfAggRows(d.by_symbol, "No closed trades in this window.");
+  $("pfStratBody").innerHTML = pfCombinedRows(d.combined_by_strategy, "Nothing in this window.");
+  $("pfSymBody").innerHTML = pfCombinedRows(d.combined_by_symbol, "Nothing in this window.");
 
   // keep the strategy dropdown in sync with what actually traded
   const cur = $("pfStrat").value;
@@ -2747,8 +3108,10 @@ $("pfRunBtn").addEventListener("click", async () => {
   const open = d.open_lots || [];
   $("pfOpenCard").style.display = open.length ? "block" : "none";
   $("pfOpenBody").innerHTML = open.map((o) =>
-    `<tr><td>${o.channel}</td><td><b>${o.symbol}</b></td><td>${o.direction}</td><td>${o.qty}</td>` +
-    `<td>${tvMoney(o.entry_price)}</td><td class="note">${o.entry_time}</td><td>${o.strategy}</td></tr>`).join("");
+    `<tr><td>${o.channel_label || CHANNEL_LABEL[o.channel] || o.channel}</td><td><b>${o.symbol}</b></td><td>${o.direction}</td><td>${o.qty}</td>` +
+    `<td>${tvMoney(o.entry_price)}</td><td>${o.current != null ? tvMoney(o.current) : "—"}</td>` +
+    `<td>${o.unrealized_pl != null ? tvPl(o.unrealized_pl) + ` (${o.unrealized_pl_pct >= 0 ? "+" : ""}${o.unrealized_pl_pct}%)` : "—"}</td>` +
+    `<td class="note">${o.entry_time}</td><td>${o.strategy}</td></tr>`).join("");
 
   const tr = d.trades || [];
   $("pfTradesMeta").textContent = `${d.start} → ${d.end || "now"} · ${tr.length} shown`;
@@ -2758,7 +3121,44 @@ $("pfRunBtn").addEventListener("click", async () => {
     `<td>${tvMoney(t.entry_price)}</td><td>${tvMoney(t.exit_price)}</td>` +
     `<td>${tvPl(t.pl)}</td><td>${tvPl(t.pl_pct)}%</td></tr>`).join("")
     : `<tr><td colspan="10">No closed round trips for these filters.</td></tr>`;
+
+  loadZdteSignals(body.start, body.end, body.symbols);
 });
+
+// 0DTE signal log (DB-sourced): executed + shadow, with a Sent-to-Alpaca flag
+async function loadZdteSignals(start, end, symbols) {
+  if (!start) start = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const p = new URLSearchParams({ start });
+  if (end) p.set("end", end);
+  if (symbols) p.set("symbols", symbols);
+  let d;
+  try { d = await (await fetch("/api/zerodte/signals?" + p)).json(); } catch (e) { return; }
+  if (d.error) return;
+  const rows = d.signals || [], s = d.summary || {};
+  const money = (v) => v == null ? "—"
+    : `<span style="color:${v >= 0 ? "#38c793" : "#e5484d"}">${v >= 0 ? "+" : ""}$${(+v).toFixed(2)}</span>`;
+  const pct = (v) => v == null ? "—"
+    : `<span style="color:${v >= 0 ? "#38c793" : "#e5484d"}">${v >= 0 ? "+" : ""}${(+v).toFixed(2)}%</span>`;
+
+  $("zsigMeta").textContent = rows.length ? `${s.sent} sent · ${s.shadow} shadow` : "";
+  $("zsigSummary").innerHTML = rows.length
+    ? `<b>${s.signals}</b> signal(s) · <b>${s.sent}</b> sent to Alpaca (real), <b>${s.shadow}</b> shadow-logged · ` +
+      `hypothetical P/L @ $${(s.notional || 5000).toLocaleString()}/trade — ` +
+      `sent ${money(s.sent_pnl)} · shadow ${money(s.shadow_pnl)} · all ${money(s.all_pnl)}`
+    : "No 0DTE signals logged for these filters.";
+  $("zsigBody").innerHTML = rows.length ? rows.map((r) => {
+    const sent = r.sent
+      ? `<span style="color:#38c793;font-weight:600">Yes</span>`
+      : `<span style="color:#9aa3b5">No</span>`;
+    const px = (v) => v == null ? "—" : (+v).toFixed(2);
+    return `<tr${r.sent ? "" : ' style="opacity:0.72"'}>` +
+      `<td>${r.date}</td><td class="note">${(r.entry_time || "").slice(0, 5)}</td>` +
+      `<td><b>${r.symbol}</b></td><td>${r.strategy}</td><td>${r.direction || ""}</td>` +
+      `<td>${px(r.entry_price)}</td>` +
+      `<td>${r.status === "closed" ? px(r.exit_price) : '<span class="note">open</span>'}</td>` +
+      `<td>${pct(r.pnl_pct)}</td><td>${money(r.pnl_usd)}</td><td>${sent}</td></tr>`;
+  }).join("") : `<tr><td colspan="10" class="note">No 0DTE signals logged for these filters.</td></tr>`;
+}
 </script>
 </body>
 </html>

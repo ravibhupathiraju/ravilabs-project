@@ -181,12 +181,17 @@ def _guard() -> str | None:
 
 
 def arm_plan(ticker: str, qty: int, entry: float, stop: float, target: float,
-             notes: str = "") -> dict:
+             notes: str = "", source: str = "tv") -> dict:
     """Submit the plan as one server-side bracket order on Alpaca.
 
     Limit buy at `entry` (top of the pullback zone: fills anywhere at or
     below it), stop-loss and take-profit legs attached, GTC. The broker
     then manages the whole trade even when this app is not running.
+
+    ``source`` says who authored the plan and is baked into the client
+    order id -- "tv" (manual TradingView-copilot paste, tvst_p) or
+    "gemini" (morning auto-picker, tvst_g) -- so performance analysis can
+    score the two idea sources against each other from broker history.
     """
     err = _guard()
     if err:
@@ -200,7 +205,8 @@ def arm_plan(ticker: str, qty: int, entry: float, stop: float, target: float,
 
     d = _load()
     d["seq"] += 1
-    client_id = f"{TAG}p{d['seq']}_{uuid.uuid4().hex[:6]}"
+    prefix = "g" if source == "gemini" else "p"
+    client_id = f"{TAG}{prefix}{d['seq']}_{uuid.uuid4().hex[:6]}"
     try:
         order = broker._request("POST", "/v2/orders", broker._config("tvtester"), json={
             "symbol": ticker,
@@ -222,6 +228,7 @@ def arm_plan(ticker: str, qty: int, entry: float, stop: float, target: float,
         "id": d["seq"], "ticker": ticker, "qty": qty,
         "entry": entry, "stop": stop, "target": target,
         "notes": (notes or "").strip()[:2000],
+        "source": "gemini" if source == "gemini" else "tv",
         "order_id": order["id"], "client_id": client_id,
         "created": datetime.now(NY).strftime("%Y-%m-%d %H:%M"),
         "status": order["status"],

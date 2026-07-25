@@ -145,10 +145,13 @@ def bars(symbol: str, timeframe: str = "5Min", days: int = 5,
     ap_sym = _alpaca_symbol(symbol)
     now = datetime.now(NY)
     if ap_sym is not None:
-        # Alpaca paginates (page size can be well under `limit`); without
-        # following next_page_token only the OLDEST page comes back.
+        # Alpaca paginates oldest-first, and the IEX page size is far smaller
+        # than `limit` (~2k bars/page), so we MUST follow next_page_token to
+        # the end -- stopping early silently drops the most RECENT sessions.
+        # Loop until the token is exhausted; the guard only prevents a runaway
+        # (200 pages ~= 40k+ bars, well past any 1500-day lookback).
         raw, token = [], None
-        for _ in range(12):
+        for _ in range(200):
             params = {
                 "timeframe": timeframe,
                 "start": (now - timedelta(days=days)).isoformat(),

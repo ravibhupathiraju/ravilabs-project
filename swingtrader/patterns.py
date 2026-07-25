@@ -694,3 +694,213 @@ def live_status(ticker: str | None = None) -> dict:
         matches = match_live(snap["features"], cfg["patterns"]) if snap.get("ready") else []
         out.append({"config": cfg, "snapshot": snap, "matches": matches})
     return {"armed": True, "tickers": out}
+
+
+# ------------------------------------------------------------- backtest
+
+def _replay_ticker(cfg: dict, lo: str, hi: str) -> tuple[list[dict], set[str]]:
+    """Replay ONE armed ticker over [lo, hi] exactly as the live monitor would.
+
+    For every session in range it walks the 5-minute bars from the moment the
+    session is "ready" (opening range done + 7 bars, ~10:00 ET) through the
+    close, rebuilds the same live feature snapshot as ``live_features`` at each
+    bar with no look-ahead, and fires a pattern the first time its conditions
+    match that day (deduped per pattern/day, matching the monitor's INSERT OR
+    IGNORE). Each fire is then settled to its +/-$ barrier or the session close
+    with the same first-touch logic as the study, so results line up with the
+    live "Pattern alerts fired" table. Event days are NOT excluded -- the
+    monitor fires on them too, so the replay counts them too.
+    """
+    tk = cfg["ticker"]
+    target = float(cfg["target"])
+    start_d = date.fromisoformat(lo)
+    # Only need bars from a little before `start` (RSI/daily warmup) to now --
+    # far cheaper than the ticker's full arming lookback.
+    span = (date.today() - start_d).days
+    intr = marketdata.bars(tk, "5Min", days=span + 15)
+    if intr.empty:
+        raise ValueError(f"no intraday data for {tk}")
+    daily = load_history(tk, days=span + 90)
+    if daily.empty:
+        raise ValueError(f"no daily data for {tk}")
+
+    pdh, pdl, pdc = daily["High"].shift(1), daily["Low"].shift(1), daily["Close"].shift(1)
+    yret = (daily["Close"].shift(1) / daily["Close"].shift(2) - 1) * 100
+    adr = (daily["High"] - daily["Low"]).rolling(14).mean().shift(1)
+    ctx = {
+        ts.date().isoformat(): {"pdh": h, "pdl": l, "pdc": c, "yret": r, "adr": a}
+        for ts, h, l, c, r, a in zip(daily.index, pdh, pdl, pdc, yret, adr)
+    }
+
+    delta = intr["Close"].diff()
+    gain = delta.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    loss = (-delta.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    intr = intr.copy()
+    intr["rsi"] = (100 - 100 / (1 + gain / loss.replace(0, np.nan))).fillna(50)
+
+    triggers: list[dict] = []
+    sessions: set[str] = set()
+    for day, g in intr.groupby(intr.index.date):
+        ds = day.isoformat()
+        if not (lo <= ds <= hi):
+            continue
+        c = ctx.get(ds)
+        if c is None or pd.isna(c["adr"]) or pd.isna(c["pdc"]):
+            continue
+        hm = np.asarray(g.index.strftime("%H:%M"))
+        pre = g.iloc[np.asarray(hm < "10:00", dtype=bool)]
+        # Same readiness gate as live_features: full opening range + 7 bars.
+        if len(g) < 7 or len(pre) < 5 or hm[0] != "09:30":
+            continue
+        sessions.add(ds)
+
+        o = float(g["Open"].iloc[0])
+        gap_pct = (o / c["pdc"] - 1) * 100
+        or_hi, or_lo = float(pre["High"].max()), float(pre["Low"].min())
+        f30 = (float(pre["Close"].iloc[-1]) / o - 1) * 100
+        tp = (g["High"] + g["Low"] + g["Close"]) / 3
+        vol = g["Volume"].clip(lower=1)
+        vwap = ((tp * vol).cumsum() / vol.cumsum()).to_numpy()
+        highs, lows = g["High"].to_numpy(), g["Low"].to_numpy()
+        closes, rsis = g["Close"].to_numpy(), g["rsi"].to_numpy()
+        hi_run = np.maximum.accumulate(highs)
+        lo_run = np.minimum.accumulate(lows)
+        dow = day.strftime("%a")
+
+        fired: dict[str, dict] = {}  # label -> first match this day (dedup)
+        for i in range(6, len(g)):          # ready from the 10:00 bar on
+            if hm[i] < "10:00":
+                continue
+            i6 = max(0, i - 6)
+            P = float(closes[i])
+            feats = _bucketize({
+                "tod": hm[i], "P": P, "gap_pct": gap_pct,
+                "or_hi": or_hi, "or_lo": or_lo,
+                "dv": (P - vwap[i]) / vwap[i] * 100,
+                "vslope": (vwap[i] - vwap[i6]) / P * 100,
+                "rsi": rsis[i], "pdh": c["pdh"], "pdl": c["pdl"],
+                "dow": dow, "f30": f30, "yret": c["yret"],
+                "ru": (hi_run[i] - lo_run[i]) / c["adr"],
+                "mom30": (P - closes[i6]) / closes[i6] * 100,
+            })
+            for p in cfg["patterns"]:
+                if p["label"] in fired:
+                    continue
+                if all(feats.get(k) == v for k, v in p["conds"].items()):
+                    fired[p["label"]] = {"i": i, "tod": hm[i], "P": P, "pat": p}
+
+        for m in fired.values():
+            i, P, p = m["i"], m["P"], m["pat"]
+            long = p["side"] == "long"
+            tmask = (highs[i + 1:] >= P + target) if long else (lows[i + 1:] <= P - target)
+            smask = (lows[i + 1:] <= P - target) if long else (highs[i + 1:] >= P + target)
+            jt = int(np.argmax(tmask)) if tmask.any() else -1
+            js = int(np.argmax(smask)) if smask.any() else -1
+            if jt < 0 and js < 0:
+                result, j = "session_close", -1
+            elif js < 0 or (0 <= jt < js):
+                result, j = "target", jt
+            elif jt < 0 or js < jt:
+                result, j = "stop", js
+            else:
+                result, j = "stop_ambig", jt
+            mins = None if j < 0 else (g.index[i + 1 + j] - g.index[i]).total_seconds() / 60
+            triggers.append({
+                "date": ds, "tod": m["tod"], "ticker": tk,
+                "side": p["side"], "label": p["label"], "win_pct": p["win_pct"],
+                "result": result, "win": result == "target", "mins": _rnd(mins, 0),
+            })
+    return triggers, sessions
+
+
+def backtest(start: str, end: str | None = None, ticker: str | None = None) -> dict:
+    """What-if replay of the currently armed patterns over a past date range.
+
+    Mirrors the live monitor bar-by-bar (see ``_replay_ticker``): answers "on
+    these day(s), how many armed setups would have fired, and how many hit
+    target first?" without the monitor having been running at the time.
+    """
+    start_d = date.fromisoformat(start)
+    end_d = date.fromisoformat(end) if end else start_d
+    if end_d < start_d:
+        start_d, end_d = end_d, start_d
+    lo, hi = start_d.isoformat(), end_d.isoformat()
+
+    cfgs = armed_list()
+    if ticker:
+        ticker = ticker.upper().strip()
+        cfgs = [c for c in cfgs if c["ticker"] == ticker]
+    if not cfgs:
+        return {"armed": False, "start": lo, "end": hi, "triggers": [],
+                "per_ticker": [], "by_date": [], "summary": {}}
+
+    triggers: list[dict] = []
+    per_ticker: list[dict] = []
+    for cfg in cfgs:
+        tk = cfg["ticker"]
+        try:
+            tk_trigs, tk_sessions = _replay_ticker(cfg, lo, hi)
+        except ValueError as exc:
+            per_ticker.append({"ticker": tk, "error": str(exc), "triggers": 0, "sessions": 0})
+            continue
+        triggers.extend(tk_trigs)
+        per_ticker.append({"ticker": tk, "sessions": len(tk_sessions),
+                           "triggers": len(tk_trigs)})
+
+    triggers.sort(key=lambda r: (r["date"], r["tod"], r["ticker"]))
+
+    by_date: dict[str, dict] = {}
+    for t in triggers:
+        d = by_date.setdefault(t["date"], {"date": t["date"], "triggers": 0, "wins": 0})
+        d["triggers"] += 1
+        d["wins"] += int(t["win"])
+
+    # Per-pattern rollup: how each armed pattern actually did over the window,
+    # so a good pattern isn't hidden inside the blended realized rate.
+    by_pat: dict[tuple, dict] = {}
+    for t in triggers:
+        key = (t["ticker"], t["side"], t["label"])
+        g = by_pat.get(key)
+        if g is None:
+            g = by_pat[key] = {
+                "ticker": t["ticker"], "side": t["side"], "label": t["label"],
+                "predicted_pct": t["win_pct"], "triggers": 0, "wins": 0,
+                "results": Counter(), "_mins": [], "dates": [],
+            }
+        g["triggers"] += 1
+        g["wins"] += int(t["win"])
+        g["results"][t["result"]] += 1
+        g["dates"].append({"date": t["date"], "tod": t["tod"],
+                           "result": t["result"], "win": t["win"]})
+        if t["mins"] is not None:
+            g["_mins"].append(t["mins"])
+    by_pattern = []
+    for g in by_pat.values():
+        n, w = g["triggers"], g["wins"]
+        mins = g.pop("_mins")
+        by_pattern.append({
+            **g, "results": dict(g["results"]),
+            "realized_pct": round(100 * w / n, 1) if n else None,
+            "edge": (round(100 * w / n - g["predicted_pct"], 1)
+                     if n and g["predicted_pct"] is not None else None),
+            "avg_mins": round(sum(mins) / len(mins)) if mins else None,
+        })
+    # Best realized first; ties broken by sample size then predicted rate.
+    by_pattern.sort(key=lambda r: (-(r["realized_pct"] or 0), -r["triggers"],
+                                   -(r["predicted_pct"] or 0)))
+
+    total = len(triggers)
+    wins = sum(1 for t in triggers if t["win"])
+    preds = [t["win_pct"] for t in triggers if t["win_pct"] is not None]
+    summary = {
+        "total": total,
+        "wins": wins,
+        "realized_pct": round(100 * wins / total, 1) if total else None,
+        "predicted_pct": round(sum(preds) / len(preds), 1) if preds else None,
+        "sessions": len({t["date"] for t in triggers}),
+        "results": dict(Counter(t["result"] for t in triggers)),
+    }
+    return {"armed": True, "start": lo, "end": hi, "triggers": triggers,
+            "per_ticker": per_ticker, "by_pattern": by_pattern,
+            "by_date": sorted(by_date.values(), key=lambda r: r["date"]),
+            "summary": summary}

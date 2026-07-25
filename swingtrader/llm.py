@@ -79,11 +79,11 @@ def _num(v):
         return None
 
 
-def parse_trade_note(text: str) -> dict | None:
-    """Ask Gemini to structure the note. Returns None on any failure so the
-    caller can fall back to the regex parser -- a parse must never error out."""
+def ask_json(prompt: str, timeout: int = 45):
+    """Send one prompt, get parsed JSON back (dict or list), or None on any
+    failure. Walks the model chain so retirements/quota never hard-fail."""
     cfg = _config()
-    if not cfg["api_key"] or not text.strip():
+    if not cfg["api_key"] or not prompt.strip():
         return None
     models = [cfg["model"]] if cfg["model"] else MODELS
     for model in models:
@@ -92,39 +92,80 @@ def parse_trade_note(text: str) -> dict | None:
                 URL.format(model=model),
                 params={"key": cfg["api_key"]},
                 json={
-                    "contents": [{"parts": [{"text": PROMPT + text}]}],
+                    "contents": [{"parts": [{"text": prompt}]}],
                     "generationConfig": {
                         "responseMimeType": "application/json",
                         "temperature": 0,
                     },
                 },
-                timeout=30,
+                timeout=timeout,
             )
             if resp.status_code == 404:
                 continue  # model not on this key/API version; try the next
             resp.raise_for_status()
             raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            data = json.loads(re.sub(r"^```(?:json)?|```$", "",
-                                     raw.strip(), flags=re.M).strip())
+            s = re.sub(r"^```(?:json)?|```$", "", raw.strip(), flags=re.M).strip()
+            try:
+                return json.loads(s)
+            except ValueError:
+                pass
+            try:  # defect 1: trailing commas
+                return json.loads(re.sub(r",\s*([}\]])", r"\1", s))
+            except ValueError:
+                pass
+            # defect 2: truncated output (thinking models sometimes emit
+            # `[{...}` and STOP) -- close whatever brackets are still open
+            return json.loads(_close_brackets(s))
         except Exception as exc:
             print(f"[llm] {model}: {exc}")
             continue
-
-        out = {
-            "ticker": (str(data.get("ticker")).upper().strip()
-                       if data.get("ticker") else None),
-            "direction": data.get("direction") if data.get("direction")
-                         in ("long", "short") else None,
-            "entry_low": _num(data.get("entry_low")),
-            "entry_high": _num(data.get("entry_high")),
-            "stop": _num(data.get("stop")),
-            "target": _num(data.get("target")),
-            "target2": _num(data.get("target2")),
-            "summary": (str(data.get("summary") or "").strip() or None),
-            "warnings": [str(w) for w in (data.get("warnings") or [])],
-            "source": f"Gemini ({model})",
-        }
-        if out["entry_low"] and not out["entry_high"]:
-            out["entry_high"] = out["entry_low"]
-        return out
     return None
+
+
+def _close_brackets(s: str) -> str:
+    """Append the closers a truncated JSON document still owes."""
+    stack, in_str, esc = [], False, False
+    for ch in s:
+        if esc:
+            esc = False
+        elif in_str and ch == "\\":
+            esc = True
+        elif ch == '"':
+            in_str = not in_str
+        elif not in_str and ch in "[{":
+            stack.append(ch)
+        elif not in_str and ch in "]}":
+            if stack:
+                stack.pop()
+    s = s.rstrip()
+    if in_str:
+        s += '"'
+    s = re.sub(r",\s*$", "", s)  # a dangling comma before the closers
+    return s + "".join("]" if c == "[" else "}" for c in reversed(stack))
+
+
+def parse_trade_note(text: str) -> dict | None:
+    """Ask Gemini to structure the note. Returns None on any failure so the
+    caller can fall back to the regex parser -- a parse must never error out."""
+    if not enabled() or not text.strip():
+        return None
+    data = ask_json(PROMPT + text)
+    if not isinstance(data, dict):
+        return None
+    out = {
+        "ticker": (str(data.get("ticker")).upper().strip()
+                   if data.get("ticker") else None),
+        "direction": data.get("direction") if data.get("direction")
+                     in ("long", "short") else None,
+        "entry_low": _num(data.get("entry_low")),
+        "entry_high": _num(data.get("entry_high")),
+        "stop": _num(data.get("stop")),
+        "target": _num(data.get("target")),
+        "target2": _num(data.get("target2")),
+        "summary": (str(data.get("summary") or "").strip() or None),
+        "warnings": [str(w) for w in (data.get("warnings") or [])],
+        "source": "Gemini",
+    }
+    if out["entry_low"] and not out["entry_high"]:
+        out["entry_high"] = out["entry_low"]
+    return out

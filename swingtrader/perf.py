@@ -18,28 +18,57 @@ Filters: channels, date range (on exit time), symbols, strategy.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from . import broker
 
 NY = ZoneInfo("America/New_York")
-CHANNELS = ("swing", "zerodte", "tvtester")
-CHANNEL_LABEL = {"swing": "Swing", "zerodte": "0DTE", "tvtester": "TV tester"}
+
+
+def _to_et(iso: str) -> str:
+    """Alpaca fill timestamps are UTC (…Z). Convert to Eastern wall-clock so
+    times read as market hours (a 15:55 ET flatten showed as 19:55 raw), and
+    so the date used for filtering is the actual ET trading day. Returns
+    'YYYY-MM-DDTHH:MM:SS' (or the raw first 19 chars if it can't be parsed)."""
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(NY).isoformat()[:19]
+    except Exception:
+        return iso[:19]
+CHANNELS = ("swing", "zerodte", "tvtester", "pattern")
+CHANNEL_LABEL = {"swing": "Swing", "zerodte": "0DTE", "tvtester": "TV tester",
+                 "pattern": "Pattern"}
 
 
 def _strategy_of(client_id: str) -> str:
     """Parse the strategy back out of our client-order-id tags."""
     cid = client_id or ""
+    if cid.startswith("tvst_g"):
+        return "gemini-auto"   # morning Gemini auto-picker
     if cid.startswith("tvst_p"):
-        return "plan"
+        return "tv-plan"       # manually pasted TradingView-copilot plan
     if cid.startswith("tvst_m"):
         return "manual"
+    if cid.startswith("pt_"):
+        return "pattern"       # Pattern-lab live match (on the 0DTE account)
     if cid.startswith(("sw_", "zd_")):
         parts = cid.split("_")
         if len(parts) >= 3 and parts[1] and parts[1] != "x":
             return parts[1]
     return "untagged"
+
+
+def _label(channel: str, strategy: str) -> str:
+    """Display bucket. Pattern trades share the 0DTE account but report under
+    their own 'Pattern' bucket so the two strategies never blur together."""
+    if strategy == "pattern":
+        return "Pattern"
+    return CHANNEL_LABEL.get(channel, channel)
 
 
 def _filled_orders(channel: str, start: str | None, end: str | None) -> list[dict]:
@@ -82,7 +111,7 @@ def _filled_orders(channel: str, start: str | None, end: str | None) -> list[dic
             "side": o["side"],
             "qty": float(o["filled_qty"]),
             "price": float(o["filled_avg_price"]),
-            "time": (o.get("filled_at") or o.get("submitted_at") or "")[:19],
+            "time": _to_et(o.get("filled_at") or o.get("submitted_at") or ""),
             "strategy": _strategy_of(o.get("client_order_id")),
             "order_type": o["type"],
         })
@@ -117,7 +146,7 @@ def _round_trips(fills: list[dict], channel: str) -> tuple[list[dict], list[dict
                 base = entry_px * m
                 trades.append({
                     "channel": channel,
-                    "channel_label": CHANNEL_LABEL.get(channel, channel),
+                    "channel_label": _label(channel, lot["strategy"]),
                     "symbol": symbol,
                     "strategy": lot["strategy"],
                     "direction": direction,
@@ -138,7 +167,9 @@ def _round_trips(fills: list[dict], channel: str) -> tuple[list[dict], list[dict
                              "strategy": f["strategy"]})
         for lot in lots:
             open_lots.append({
-                "channel": channel, "symbol": symbol,
+                "channel": channel,
+                "channel_label": _label(channel, lot["strategy"]),
+                "symbol": symbol,
                 "direction": "long" if lot["qty"] > 0 else "short",
                 "qty": abs(lot["qty"]), "entry_price": round(lot["price"], 4),
                 "entry_time": lot["time"], "strategy": lot["strategy"],
@@ -163,6 +194,66 @@ def _agg(trades: list[dict], key) -> list[dict]:
             "avg_pl_pct": round(sum(t["pl_pct"] or 0 for t in ts) / len(ts), 2),
         })
     out.sort(key=lambda r: r["total_pl"], reverse=True)
+    return out
+
+
+def _live_positions(channel: str) -> dict[str, dict]:
+    """Current price + live unrealized P/L per symbol, straight from Alpaca
+    (the account's own mark, not a second price fetch)."""
+    cfg = broker._config(channel)
+    if not (cfg["key_id"] and cfg["secret_key"]):
+        return {}
+    try:
+        rows = broker._request("GET", "/v2/positions", cfg)
+    except Exception:
+        return {}
+    return {p["symbol"]: {
+        "current": float(p["current_price"]),
+        "unrealized_pl": float(p["unrealized_pl"]),
+        "unrealized_plpc": round(100 * float(p["unrealized_plpc"]), 2),
+    } for p in rows}
+
+
+def _mark_open_lots(open_lots: list[dict], chans: list[str]) -> None:
+    """Attach live price + unrealized P/L to each open lot in place."""
+    live_by_chan = {ch: _live_positions(ch) for ch in chans}
+    for o in open_lots:
+        live = live_by_chan.get(o["channel"], {}).get(o["symbol"])
+        if live:
+            o["current"] = live["current"]
+            o["unrealized_pl"] = round(live["unrealized_pl"], 2)
+            o["unrealized_pl_pct"] = live["unrealized_plpc"]
+        else:
+            o["current"] = o["unrealized_pl"] = o["unrealized_pl_pct"] = None
+
+
+def _combined(closed_rows: list[dict], open_lots: list[dict], key) -> list[dict]:
+    """Merge realized (closed) with unrealized (open) totals under one name
+    per group -- e.g. one PG row shows its realized P/L AND its still-open
+    unrealized P/L side by side, so nothing needs mental addition."""
+    names = {r["name"] for r in closed_rows} | {key(o) for o in open_lots}
+    by_closed = {r["name"]: r for r in closed_rows}
+    open_pl: dict[str, float] = {}
+    open_ct: dict[str, int] = {}
+    for o in open_lots:
+        n = key(o)
+        open_pl[n] = open_pl.get(n, 0) + (o["unrealized_pl"] or 0)
+        open_ct[n] = open_ct.get(n, 0) + 1
+    out = []
+    for name in names:
+        c = by_closed.get(name)
+        realized = c["total_pl"] if c else 0.0
+        unrealized = round(open_pl.get(name, 0.0), 2)
+        out.append({
+            "name": name,
+            "closed_trades": c["trades"] if c else 0,
+            "win_rate": c["win_rate"] if c else None,
+            "realized_pl": realized,
+            "open_positions": open_ct.get(name, 0),
+            "unrealized_pl": unrealized,
+            "combined_pl": round(realized + unrealized, 2),
+        })
+    out.sort(key=lambda r: r["combined_pl"], reverse=True)
     return out
 
 
@@ -217,13 +308,30 @@ def analyze(channels: list[str] | None = None,
         "best": max((t["pl"] for t in trades), default=None),
         "worst": min((t["pl"] for t in trades), default=None),
     }
+
+    # live mark on open lots so unrealized P/L is visible without a side trip
+    # to the broker boxes -- filtered to the requested symbols like closed
+    _mark_open_lots(open_lots, chans)
+    open_view = [o for o in open_lots if not want_syms or o["symbol"] in want_syms]
+    unrealized_total = round(sum(o["unrealized_pl"] or 0 for o in open_view), 2)
+    summary["unrealized_pl"] = unrealized_total
+    summary["combined_pl"] = round(summary["total_pl"] + unrealized_total, 2)
+    summary["open_positions"] = len(open_view)
+
+    by_channel = _agg(trades, lambda t: t["channel_label"])
+    by_strategy = _agg(trades, lambda t: f"{t['channel_label']} · {t['strategy']}")
+    by_symbol = _agg(trades, lambda t: t["symbol"])
     return {
         "summary": summary,
-        "by_channel": _agg(trades, lambda t: t["channel_label"]),
-        "by_strategy": _agg(trades, lambda t: f"{t['channel_label']} · {t['strategy']}"),
-        "by_symbol": _agg(trades, lambda t: t["symbol"]),
+        "by_channel": by_channel,
+        "by_strategy": by_strategy,
+        "by_symbol": by_symbol,
+        "combined_by_channel": _combined(by_channel, open_view, lambda o: o["channel_label"]),
+        "combined_by_strategy": _combined(by_strategy, open_view,
+            lambda o: f"{o['channel_label']} · {o['strategy']}"),
+        "combined_by_symbol": _combined(by_symbol, open_view, lambda o: o["symbol"]),
         "trades": trades[:400],
-        "open_lots": open_lots,
+        "open_lots": open_view,
         "strategies": strategies,
         "channels_analyzed": chans,
         "start": start,

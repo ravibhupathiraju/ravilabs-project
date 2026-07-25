@@ -39,8 +39,10 @@ PAPER_URL = "https://paper-api.alpaca.markets"
 # alerts and logs exactly as before -- signals just never reach the broker.
 # Exits (close/flatten) are never gated, so pausing cannot strand an open
 # position. Persisted to broker_channels.json so the choice survives restarts.
-# All three strategies trade by default; pause from any tab's pill.
-DEFAULT_CHANNELS = {"swing": True, "zerodte": True, "tvtester": True}
+# Every strategy trades by default; pause from any tab's pill. Each has its
+# own dedicated Alpaca paper account (accounts.<name> in alpaca.json), so
+# results never mix and two strategies can hold the same symbol at once.
+DEFAULT_CHANNELS = {"swing": True, "zerodte": True, "tvtester": True, "pattern": True}
 
 # Portfolio guardrails. A single scan of the full universe can produce 40+
 # simultaneous signals; without caps they would all be sent, blow past the
@@ -378,6 +380,66 @@ def zerodte_order(symbol: str, strategy: str, direction: str, price: float):
         return {"id": order["id"], "qty": qty, "notional": notional, "side": side}
     except Exception as exc:
         print(f"[broker] {symbol}: 0DTE order failed: {exc}")
+        return None
+
+
+def pattern_order(symbol: str, direction: str, price: float):
+    """Intraday market order for a Pattern-lab live match (long or short).
+
+    Runs on the Pattern channel's OWN paper account, so it never collides
+    with 0DTE even on a shared symbol. Like 0DTE it is a plain day-market
+    order -- the monitor closes it when the ±$ barrier is hit or at the
+    session close, and the 15:55 sweep flattens any leftover, so nothing
+    carries overnight. Tagged ``pt_`` for performance attribution.
+
+    Returns {"id", "qty", "notional", "side"} or None when disabled, paused,
+    untradable (SPX), or blocked by a guardrail.
+    """
+    cfg = _config("pattern")
+    if not (cfg["key_id"] and cfg["secret_key"]):
+        return None
+    if not channel_active("pattern"):
+        print(f"[broker] {symbol}: pattern paper trading paused; alert only")
+        return None
+    if symbol in UNTRADABLE:
+        print(f"[broker] {symbol}: cash index, not tradable; alert only")
+        return None
+
+    side = "buy" if direction == "long" else "sell"
+    try:
+        pf = _portfolio(cfg)
+        if symbol in pf["held"] or symbol in pf["pending"]:
+            print(f"[broker] {symbol}: already held/pending on the pattern account; skipped")
+            return None
+        if pf["slots_used"] >= cfg["max_positions"]:
+            print(f"[broker] {symbol}: at position cap "
+                  f"({pf['slots_used']}/{cfg['max_positions']}); skipped")
+            return None
+
+        qty = int(cfg["zerodte_notional"] / price)
+        if qty < 1:
+            print(f"[broker] {symbol}: price {price:.2f} above notional; skipped")
+            return None
+        notional = qty * price
+
+        cap = pf["equity"] * cfg["max_exposure_pct"] / 100.0
+        if pf["exposure"] + notional > cap:
+            print(f"[broker] {symbol}: would exceed exposure cap; skipped")
+            return None
+
+        order = _request("POST", "/v2/orders", cfg, json={
+            "symbol": symbol,
+            "qty": str(qty),
+            "side": side,
+            "type": "market",
+            "time_in_force": "day",   # never carries overnight
+            "client_order_id": _tag("pt", "pattern"),
+        })
+        print(f"[broker] {symbol}: pattern paper {side} {qty} shares "
+              f"(~${notional:,.0f}) (order {order['id'][:8]})")
+        return {"id": order["id"], "qty": qty, "notional": notional, "side": side}
+    except Exception as exc:
+        print(f"[broker] {symbol}: pattern order failed: {exc}")
         return None
 
 

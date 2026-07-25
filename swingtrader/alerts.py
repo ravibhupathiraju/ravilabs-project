@@ -587,6 +587,64 @@ def close_stale_0dte(now: datetime) -> int:
     return closed
 
 
+def zerodte_signals(start: str, end: str | None = None, symbols=None) -> dict:
+    """Every logged 0DTE signal in [start, end] with a sent-to-Alpaca flag.
+
+    Sourced from the app's OWN signal log (the alerts DB), not the broker -- so
+    unlike "Closed round trips" (broker fills only) this also includes the
+    shadow trades that were logged but never sent: the 2nd+ signal for a ticker
+    that day under the one-live-trade-per-ticker cap, alert-only strategies, and
+    SPX. Prices are the live 5-minute signal prices (not fills); P/L$ is
+    HYPOTHETICAL at the standard 0DTE size so sent and shadow trades compare on
+    equal footing. Real broker P/L stays in perf.py.
+
+    sent = the row carries a broker_order_id (a real Alpaca paper order).
+    """
+    notional = float(broker._config("zerodte").get("zerodte_notional") or 5000.0)
+    q = "SELECT * FROM alerts WHERE kind='0dte' AND date >= ?"
+    params: list = [start]
+    if end:
+        q += " AND date <= ?"
+        params.append(end)
+    syms = [s.upper().strip() for s in (symbols or []) if str(s).strip()]
+    if syms:
+        q += " AND symbol IN (%s)" % ",".join("?" * len(syms))
+        params += syms
+    q += " ORDER BY date DESC, entry_time DESC, symbol"
+    with _db() as con:
+        rows = [dict(r) for r in con.execute(q, params)]
+
+    out = []
+    for r in rows:
+        entry = r.get("entry_price")
+        qty = int(notional / entry) if entry else 0          # hypothetical size
+        pnl_pct = r.get("pnl_pct")
+        pnl_usd = (round(pnl_pct / 100 * qty * entry, 2)
+                   if (pnl_pct is not None and entry) else None)
+        out.append({
+            "date": r["date"], "entry_time": r.get("entry_time"), "symbol": r["symbol"],
+            "strategy": STRATEGY_LABELS.get(r["strategy"], r["strategy"]),
+            "direction": r.get("direction"), "entry_price": entry,
+            "exit_time": r.get("exit_time"), "exit_price": r.get("exit_price"),
+            "pnl_pct": pnl_pct, "pnl_usd": pnl_usd, "qty": qty,
+            "sent": r.get("broker_order_id") is not None,
+            "status": r.get("status"), "exit_reason": r.get("exit_reason"),
+        })
+
+    closed = [x for x in out if x["status"] == "closed" and x["pnl_usd"] is not None]
+    _sum = lambda pred: round(sum(x["pnl_usd"] for x in closed if pred(x)), 2)
+    summary = {
+        "signals": len(out),
+        "sent": sum(1 for x in out if x["sent"]),
+        "shadow": sum(1 for x in out if not x["sent"]),
+        "sent_pnl": _sum(lambda x: x["sent"]),
+        "shadow_pnl": _sum(lambda x: not x["sent"]),
+        "all_pnl": _sum(lambda x: True),
+        "notional": notional,
+    }
+    return {"signals": out, "summary": summary, "start": start, "end": end}
+
+
 # --------------------------------------------------------------------------
 # Swing alerts: signal on the close -> fill at next open -> daily exit checks
 # (mirrors the backtest execution model in backtest.py)
@@ -924,18 +982,23 @@ class AlertMonitor:
                 except Exception as exc:
                     print(f"[alert] poll error: {exc}")
                 self.last_poll = now.isoformat(timespec="seconds")
-            # 0DTE safety net: flatten any paper position in the monitored
-            # symbols just before the close. Nothing intraday carries
-            # overnight, even if an exit alert was missed. Swing positions
-            # are untouched (the sweep is scoped to the 0DTE symbols).
+            # Intraday safety net: flatten 0DTE and Pattern paper positions
+            # just before the close. Nothing intraday carries overnight, even
+            # if an exit was missed. Each trades its own account, so the two
+            # sweeps are scoped separately. Swing (its own account) is untouched.
             if (
-                self.symbols
-                and now.weekday() < 5
+                now.weekday() < 5
                 and "15:55" <= now.strftime("%H:%M") <= "16:05"
                 and self._flattened_date != now.strftime("%Y-%m-%d")
             ):
                 try:
-                    broker.flatten(self.symbols, channel="zerodte")
+                    if self.symbols:
+                        broker.flatten(self.symbols, channel="zerodte")
+                    if self.pattern_on:
+                        store = patterns.armed()
+                        if store:
+                            broker.flatten(sorted({t.upper() for t in store["tickers"]}),
+                                           channel="pattern")
                 except Exception as exc:
                     print(f"[alert] flatten error: {exc}")
                 self._flattened_date = now.strftime("%Y-%m-%d")
@@ -1001,6 +1064,32 @@ class AlertMonitor:
                     print(f"[alert] pattern tick error: {exc}")
                 self._last_pat_ts = time.time()
                 self.last_pattern_poll = now.isoformat(timespec="seconds")
+            # Morning Gemini auto-picker: weekdays at 6:15 AM PST (9:15 ET),
+            # before the open. Picks up to 2 A+ setups from the scanner
+            # shortlist and arms them as tagged (tvst_g) bracket plans.
+            # Failures before 9:45 retry each loop; then it stands down for
+            # the day so a broken feed can't hammer Gemini until the close.
+            today = now.strftime("%Y-%m-%d")
+            if (
+                now.weekday() < 5
+                and "09:15" <= now.strftime("%H:%M")
+                and _settings().get("autopick", True)
+                and _settings().get("last_autopick_date") != today
+            ):
+                done = False
+                try:
+                    from . import autopick
+                    result = autopick.run()
+                    _settings_set("autopick_last", result)
+                    done = "error" not in result
+                    if result.get("armed"):
+                        names = ", ".join(a["ticker"] for a in result["armed"])
+                        _toast(f"GEMINI AUTO-PICK: {names}",
+                               f"{len(result['armed'])} plan(s) armed as paper brackets")
+                except Exception as exc:
+                    print(f"[alert] autopick error: {exc}")
+                if done or now.strftime("%H:%M") >= "09:45":
+                    _settings_set("last_autopick_date", today)
             # End-of-day confirmation scan: intraday signals are provisional
             # (partial daily bar). One rescan on the completed bar confirms
             # which survived to the close and submits their paper orders.
@@ -1078,10 +1167,27 @@ class AlertMonitor:
                             (now.strftime("%H:%M:%S"), today, tkr, p["label"],
                              "long" if long else "short", snap["tod"], P, stop, tgt, planned),
                         )
+                        row_id = cur.lastrowid
+                        # Mirror to the Pattern paper account during the
+                        # session -- a plain day-market entry the settle logic
+                        # (and the 15:55 sweep) later flattens. Never after the
+                        # close, when a market order would fill next day.
+                        order = None
+                        if cur.rowcount and self._market_open(now) \
+                                and now.strftime("%H:%M") < SESSION_END:
+                            order = broker.pattern_order(
+                                tkr, "long" if long else "short", P)
+                            if order:
+                                con.execute(
+                                    "UPDATE alerts SET broker_order_id=?, broker_qty=? WHERE id=?",
+                                    (order["id"], order["qty"], row_id),
+                                )
                     if cur.rowcount:
+                        paper = (f" | paper {order['side']} {order['qty']} sh"
+                                 if order else "")
                         _toast(
                             f"PATTERN {p['side'].upper()} {p['win_pct']}%: {tkr} @ {P:.2f}",
-                            f"{p['label']} → target {tgt:.2f} / stop {stop:.2f} (informational)",
+                            f"{p['label']} → target {tgt:.2f} / stop {stop:.2f}{paper}",
                         )
             self._settle_pattern_trades(tkr, now)
 
@@ -1125,6 +1231,10 @@ class AlertMonitor:
                     "exit_reason=?, status='closed' WHERE id=?",
                     (now.strftime("%H:%M"), round(exit_price, 2), round(pnl, 3), reason, r["id"]),
                 )
+            # Flatten the mirrored paper position (Pattern account). No-op if
+            # the 15:55 sweep already closed it, or if no order was placed.
+            if r.get("broker_order_id"):
+                broker.close(tkr, channel="pattern")
             _toast(
                 f"PATTERN EXIT ({reason}): {tkr} @ {exit_price:.2f}",
                 f"{r['strategy']} → {'+' if pnl >= 0 else ''}{pnl:.2f}%",
@@ -1202,7 +1312,19 @@ class AlertMonitor:
                 # live during the session, never after the exit already printed.
                 if not res.get("exited") and self._market_open(now) and \
                         now.strftime("%H:%M") < SESSION_END:
-                    order = broker.zerodte_order(
+                    # One LIVE trade per ticker per day: if a real order already
+                    # went to Alpaca for this symbol today, shadow-log the rest
+                    # (they stay in the DB with broker_order_id NULL = "not sent"
+                    # and still settle a P/L, just never reach the broker).
+                    already_live = con.execute(
+                        "SELECT 1 FROM alerts WHERE kind='0dte' AND date=? AND symbol=? "
+                        "AND broker_order_id IS NOT NULL AND id<>? LIMIT 1",
+                        (date, sym, row["id"]),
+                    ).fetchone()
+                    if already_live:
+                        print(f"[alert] {sym} {name}#{seq}: 1 live trade/ticker/day "
+                              "cap reached -- shadow-logged, not sent to Alpaca")
+                    order = None if already_live else broker.zerodte_order(
                         sym, name, res["direction"], res["entry_price"]
                     )
                     if order:
