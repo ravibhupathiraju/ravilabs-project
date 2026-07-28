@@ -110,6 +110,7 @@ details > summary:hover { color: var(--text); }
     <button class="tab" data-tab="miscTab">Misc</button>
     <button class="tab" data-tab="tvTab">TV strategy tester</button>
     <button class="tab" data-tab="actionPlanTab">Action plan</button>
+    <button class="tab" data-tab="laptopTab">Laptop config</button>
   </div>
   <button id="toastToggle" class="run secondary" data-on="0"
     style="margin-top:1rem;width:100%;font-size:0.8rem;padding:0.35rem 0.5rem"
@@ -700,8 +701,8 @@ details > summary:hover { color: var(--text); }
     <!-- Every trigger, chronological -->
     <div id="patBtDetailWrap" style="display:none">
       <table>
-        <thead><tr><th>Date</th><th>Time</th><th>Ticker</th><th>Pattern</th><th>Dir</th><th>Hist win%</th><th>Result</th><th>Mins</th></tr></thead>
-        <tbody id="patBtBody"><tr><td colspan="8" class="note">Pick a date (or a From/To range) and Run backtest.</td></tr></tbody>
+        <thead><tr><th>Date</th><th>In time</th><th>Ticker</th><th>Pattern</th><th>Dir</th><th>Hist win%</th><th>Entry</th><th>Out time</th><th>Exit</th><th>Result</th><th>Mins</th></tr></thead>
+        <tbody id="patBtBody"><tr><td colspan="11" class="note">Pick a date (or a From/To range) and Run backtest.</td></tr></tbody>
       </table>
     </div>
     <p class="note"><b>What-if replay</b> of the patterns you have <b>armed right now</b> &mdash; independent of whether the monitor was actually running. For every armed ticker it replays the <b>same logic the live monitor uses</b>: it walks each session's 5-minute bars from ~10:00 ET (opening range done + 7 bars) to the 16:00 close, rebuilds the identical live snapshot at each bar with no look-ahead, and fires a pattern the first time its conditions match that day (once per pattern per day, like the monitor). Each fire is settled to its &plusmn;$ barrier or the close &mdash; <b>Result</b> means the same as the live table (<i>target</i> = a win). This reproduces the fired alerts on days the monitor ran and fills in the days it was off. It can slightly <i>over</i>count vs live because it checks every bar even if the monitor missed a poll. <b>By pattern</b> rolls the triggers up per armed pattern so you can see which ones actually held up over these dates: <b>Win rate</b> = realized target-hit % on the chosen day(s), <b>Predicted</b> = what the study expected, <b>Edge</b> = realized &minus; predicted (green = beat the study). Small trigger counts are noisy &mdash; weight the ones with more samples.</p>
@@ -987,10 +988,50 @@ Target              $95 / $100"></textarea>
 </div>
 </div><!-- /actionPlanTab -->
 
+<!-- ===== Laptop config: drive the unattended auto-trade power settings ===== -->
+<div id="laptopTab" style="display:none">
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Laptop config <span class="meta">&mdash; keep the machine awake for the session, then hibernate off-hours</span></h3>
+  <p class="note" style="margin:0.2rem 0 0.8rem">Controls the unattended auto-trade behavior so live trades fire even when you're away. Toggles save instantly to <code>app_settings.json</code>. The one-time Windows setup (wake timer, hibernate, scheduled task) is done by <code>setup-autotrade.ps1</code> &mdash; the status below tells you if that's in place.</p>
+
+  <div style="display:flex;align-items:center;gap:0.8rem;margin-bottom:0.6rem">
+    <button class="run secondary" id="laptopRecheck" style="padding:0.25rem 0.9rem;font-size:0.85rem">Recheck</button>
+    <span class="note" id="laptopChecked"></span>
+  </div>
+  <div id="laptopStatus" style="display:flex;gap:0.8rem;flex-wrap:wrap;margin-bottom:1rem"></div>
+
+  <div style="display:flex;flex-direction:column;gap:0.9rem;max-width:760px">
+    <label class="check" style="display:flex;align-items:flex-start;gap:0.7rem;cursor:pointer">
+      <input type="checkbox" id="cfgWakelock" style="margin-top:0.25rem;transform:scale(1.3)">
+      <span><b>Keep awake during the session</b> &mdash; hold the machine awake 09:15&ndash;16:20 ET (weekdays) so it can't sleep mid-session. <span class="note">Turn off only if the OS already never sleeps during the day.</span></span>
+    </label>
+    <label class="check" style="display:flex;align-items:flex-start;gap:0.7rem;cursor:pointer">
+      <input type="checkbox" id="cfgHibernate" style="margin-top:0.25rem;transform:scale(1.3)">
+      <span><b>Auto-hibernate after the close</b> &mdash; hibernate a few minutes after 16:20 ET so off-hours the laptop is powered off (no network, minimal attack surface). <span class="note">Safe: only fires when you've been idle 5+ min, so it never interrupts active use; skips a session started after the close.</span></span>
+    </label>
+    <span class="status" id="cfgStatus"></span>
+  </div>
+
+  <p class="note" style="margin:1rem 0 0"><b>Daily cycle:</b> hibernate overnight → the scheduled task wakes it ~9:00 and launches the tracker → it stays awake and trades the session → hibernates when you step away. Keep yourself <b>logged in</b> (locking is fine) and use <b>Hibernate/Sleep</b>, never full Shut Down. Launch the app headless with <code>serve.py</code> (or <code>start-tracker.bat</code>).</p>
+</div>
+</div><!-- /laptopTab -->
+
 </div><!-- /main -->
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+// Open the native calendar when a date field is clicked anywhere on the page
+// (by default only the tiny icon does it). Delegated on document so it also
+// covers date inputs inside tabs that aren't rendered yet. Click only, so
+// keyboard tabbing and manual typing are left undisturbed.
+document.addEventListener("click", (e) => {
+  const el = e.target;
+  if (el && el.tagName === "INPUT" && el.type === "date" && typeof el.showPicker === "function") {
+    try { el.showPicker(); } catch (_) { /* already open / not allowed — ignore */ }
+  }
+});
+
 const KIND_LABEL = { swing: "Swing", "0dte": "0DTE", pattern: "Pattern", reversal: "Reversal" };
 const CHANNEL_LABEL = { swing: "Swing", zerodte: "0DTE", tvtester: "TV tester" };
 let wrChart, exChart, zwrChart, zexChart;
@@ -1000,7 +1041,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab", "actionPlanTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab", "actionPlanTab", "laptopTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
@@ -1010,6 +1051,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
     if (btn.dataset.tab === "miscTab" && miscChart) miscChart.main.timeScale().fitContent();
     if (btn.dataset.tab === "tvTab") { loadTv(); apRefresh(); }
     if (btn.dataset.tab === "actionPlanTab") aplanRefresh();
+    if (btn.dataset.tab === "laptopTab") laptopRefresh();
     refreshChannels();
   })
 );
@@ -1645,7 +1687,7 @@ async function runPatBacktest() {
   if (!d.armed) {
     $("patBtSummary").innerHTML = `<span class="note">Nothing is armed${sym ? " for " + sym : ""} — arm a ticker above first, then backtest it.</span>`;
     $("patBtGroupRow").style.display = "none";
-    $("patBtBody").innerHTML = `<tr><td colspan="8" class="note">No armed patterns.</td></tr>`;
+    $("patBtBody").innerHTML = `<tr><td colspan="11" class="note">No armed patterns.</td></tr>`;
     $("patBtPatBody").innerHTML = `<tr><td colspan="9" class="note">No armed patterns.</td></tr>`;
     return;
   }
@@ -1675,11 +1717,13 @@ async function runPatBacktest() {
   // Per-pattern rollup (which armed patterns actually held up over these days)
   const pats = d.by_pattern || [];
   // each date the pattern fired, colored by result (green target / red loss /
-  // grey session-close), with the fire time and result in a hover tooltip
+  // grey session-close). Hover a chip for that fire's entry→exit price & time.
   const dateChips = (dates) => (dates || []).map((x) => {
     const col = x.win ? "#38c793" : x.result === "session_close" ? "#9aa3b5" : "#e5534b";
     const mark = x.win ? "✓" : x.result === "session_close" ? "•" : "✗";
-    return `<span title="${x.tod} — ${x.result}" style="color:${col};white-space:nowrap">${x.date.slice(5)} ${mark}</span>`;
+    const tip = `${x.tod} @ ${x.entry_price != null ? x.entry_price : "?"} → ` +
+      `${x.exit_tod || "?"} @ ${x.exit_price != null ? x.exit_price : "?"} · ${x.result}`;
+    return `<span title="${tip}" style="color:${col};white-space:nowrap">${x.date.slice(5)} ${mark}</span>`;
   }).join(" · ");
   $("patBtPatBody").innerHTML = pats.length ? pats.map((p) => {
     const rp = p.realized_pct;
@@ -1695,6 +1739,7 @@ async function runPatBacktest() {
       `<td class="note">${p.avg_mins == null ? "—" : p.avg_mins}</td></tr>`;
   }).join("") : `<tr><td colspan="9" class="note">No armed pattern matched on the selected session(s).</td></tr>`;
 
+  const px = (v) => v == null ? "—" : (+v).toFixed(2);
   $("patBtBody").innerHTML = trigs.length ? trigs.map((t) => {
     const res = t.result === "target" ? `<span style="color:#38c793">target ✓</span>`
       : t.result === "session_close" ? "session close"
@@ -1703,8 +1748,10 @@ async function runPatBacktest() {
       `<td><b>${t.ticker}</b></td><td>${t.label}</td>` +
       `<td>${t.side === "long" ? "▲ long" : "▼ short"}</td>` +
       `<td>${t.win_pct != null ? t.win_pct + "%" : "—"}</td>` +
+      `<td>${px(t.entry_price)}</td>` +
+      `<td class="note">${t.exit_tod || "—"}</td><td>${px(t.exit_price)}</td>` +
       `<td>${res}</td><td class="note">${t.mins == null ? "—" : t.mins}</td></tr>`;
-  }).join("") : `<tr><td colspan="8" class="note">No armed pattern matched on the selected session(s).</td></tr>`;
+  }).join("") : `<tr><td colspan="11" class="note">No armed pattern matched on the selected session(s).</td></tr>`;
 }
 
 // Toggle between the per-pattern rollup and the chronological trigger list
@@ -2995,6 +3042,45 @@ $("aplanAddBtn").addEventListener("click", async () => {
 $("aplanCancelBtn").addEventListener("click", aplanResetForm);
 $("aplanFilterDate").addEventListener("change", aplanRefresh);
 $("aplanAllBtn").addEventListener("click", () => { $("aplanFilterDate").value = ""; aplanRefresh(); });
+
+// ===== Laptop config: unattended auto-trade power settings =====
+function laptopTile(label, value, color) {
+  return `<div style="background:#141a26;border:1px solid #263042;border-radius:8px;padding:0.6rem 0.9rem;min-width:130px">` +
+    `<div class="note" style="font-size:0.75rem;text-transform:uppercase;letter-spacing:0.03em">${label}</div>` +
+    `<div style="font-size:1.05rem;font-weight:600;color:${color || "#c7d0e0"}">${value}</div></div>`;
+}
+async function laptopRefresh() {
+  let d;
+  try { d = await (await fetch("/api/laptop/config")).json(); } catch (e) { return; }
+  $("cfgWakelock").checked = !!d.wakelock_enabled;
+  $("cfgHibernate").checked = !!d.hibernate_after_close;
+  const yn = (v, on = "#38c793", off = "#9aa3b5") => v ? ["Yes", on] : ["No", off];
+  const [monTxt, monCol] = d.monitor_running ? ["running", "#38c793"] : ["stopped", "#e5484d"];
+  const task = d.scheduled_task === true ? ["set up", "#38c793"]
+    : d.scheduled_task === false ? ["not set up", "#eab308"] : ["unknown", "#9aa3b5"];
+  const [wlTxt, wlCol] = d.wakelock_on ? ["holding awake", "#38c793"] : ["idle/off", "#9aa3b5"];
+  $("laptopStatus").innerHTML =
+    laptopTile("Monitor", monTxt, monCol) +
+    laptopTile("Wake-lock now", wlTxt, wlCol) +
+    laptopTile("Idle", d.idle_seconds != null ? d.idle_seconds + "s" : "—") +
+    laptopTile("Scheduled task", task[0], task[1]) +
+    laptopTile("Last auto-hibernate", d.hibernated_date || "—") +
+    (!d.is_windows ? `<div class="note" style="flex-basis:100%;color:#eab308">Not on Windows — power controls are inert here; they apply on the trading laptop.</div>` : "");
+  $("laptopChecked").textContent = "checked " + new Date().toLocaleTimeString();
+}
+$("laptopRecheck").addEventListener("click", laptopRefresh);
+async function laptopSet(key, value) {
+  $("cfgStatus").textContent = "Saving…";
+  try {
+    const d = await postJson("/api/laptop/config", { [key]: value });
+    $("cfgWakelock").checked = !!d.wakelock_enabled;
+    $("cfgHibernate").checked = !!d.hibernate_after_close;
+    $("cfgStatus").textContent = "Saved.";
+    setTimeout(() => { if ($("cfgStatus").textContent === "Saved.") $("cfgStatus").textContent = ""; }, 1500);
+  } catch (e) { $("cfgStatus").textContent = "Failed to save."; }
+}
+$("cfgWakelock").addEventListener("change", (e) => laptopSet("wakelock_enabled", e.target.checked));
+$("cfgHibernate").addEventListener("change", (e) => laptopSet("hibernate_after_close", e.target.checked));
 
 const tvMoney = (v) => v == null ? "—" : "$" + (+v).toFixed(2);
 const tvPl = (v) => v == null ? "—" :

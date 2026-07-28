@@ -301,6 +301,51 @@ def api_tv_autopick():
                     "last": _settings().get("autopick_last")})
 
 
+def _laptop_config() -> dict:
+    """Current unattended-trading power settings + live machine status."""
+    import sys
+    import subprocess
+    from swingtrader.alerts import MONITOR, _settings, _idle_seconds
+
+    s = _settings()
+    task = None  # True/False = task present/absent; None = unknown (non-Windows/err)
+    if sys.platform == "win32":
+        try:
+            r = subprocess.run(
+                ["schtasks", "/query", "/tn", "SwingTracker-AutoTrade"],
+                capture_output=True, text=True, timeout=5,
+            )
+            task = r.returncode == 0
+        except Exception:
+            task = None
+    return {
+        "is_windows": sys.platform == "win32",
+        "hibernate_after_close": bool(s.get("hibernate_after_close", True)),
+        "wakelock_enabled": bool(s.get("wakelock_enabled", True)),
+        "monitor_running": MONITOR.running,
+        "wakelock_on": MONITOR._wakelock_on,
+        "hibernated_date": MONITOR._hibernated_date,
+        "idle_seconds": round(_idle_seconds()),
+        "scheduled_task": task,
+        "started_at": MONITOR.started_at,
+    }
+
+
+@app.get("/api/laptop/config")
+def api_laptop_config():
+    return jsonify(_laptop_config())
+
+
+@app.post("/api/laptop/config")
+def api_laptop_config_set():
+    from swingtrader.alerts import _settings_set
+    payload = request.get_json(force=True)
+    for key in ("hibernate_after_close", "wakelock_enabled"):
+        if key in payload:
+            _settings_set(key, bool(payload[key]))
+    return jsonify(_laptop_config())
+
+
 @app.get("/api/zerodte/signals")
 def api_zerodte_signals():
     start = (request.args.get("start") or "").strip()

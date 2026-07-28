@@ -796,19 +796,28 @@ def _replay_ticker(cfg: dict, lo: str, hi: str) -> tuple[list[dict], set[str]]:
             smask = (lows[i + 1:] <= P - target) if long else (highs[i + 1:] >= P + target)
             jt = int(np.argmax(tmask)) if tmask.any() else -1
             js = int(np.argmax(smask)) if smask.any() else -1
+            tgt = P + target if long else P - target       # target barrier px
+            stp = P - target if long else P + target        # stop barrier px
             if jt < 0 and js < 0:
+                # neither barrier by the close -> exit at the last bar's close
                 result, j = "session_close", -1
+                exit_px, exit_bar = float(closes[-1]), len(g) - 1
             elif js < 0 or (0 <= jt < js):
                 result, j = "target", jt
+                exit_px, exit_bar = tgt, i + 1 + jt
             elif jt < 0 or js < jt:
                 result, j = "stop", js
-            else:
+                exit_px, exit_bar = stp, i + 1 + js
+            else:  # both barriers inside one bar -> counted as the stop
                 result, j = "stop_ambig", jt
+                exit_px, exit_bar = stp, i + 1 + jt
             mins = None if j < 0 else (g.index[i + 1 + j] - g.index[i]).total_seconds() / 60
             triggers.append({
                 "date": ds, "tod": m["tod"], "ticker": tk,
                 "side": p["side"], "label": p["label"], "win_pct": p["win_pct"],
                 "result": result, "win": result == "target", "mins": _rnd(mins, 0),
+                "entry_price": round(P, 2), "exit_price": round(exit_px, 2),
+                "exit_tod": g.index[exit_bar].strftime("%H:%M"),
             })
     return triggers, sessions
 
@@ -871,7 +880,9 @@ def backtest(start: str, end: str | None = None, ticker: str | None = None) -> d
         g["wins"] += int(t["win"])
         g["results"][t["result"]] += 1
         g["dates"].append({"date": t["date"], "tod": t["tod"],
-                           "result": t["result"], "win": t["win"]})
+                           "result": t["result"], "win": t["win"],
+                           "entry_price": t["entry_price"], "exit_price": t["exit_price"],
+                           "exit_tod": t["exit_tod"]})
         if t["mins"] is not None:
             g["_mins"].append(t["mins"])
     by_pattern = []

@@ -22,7 +22,10 @@ treat alert prices as approximate and confirm on your own quotes.
 import sqlite3
 import threading
 import json
+import os
+import sys
 import time
+import ctypes
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -254,6 +257,49 @@ def _settings_set(key: str, value) -> None:
     s = _settings()
     s[key] = value
     SETTINGS_PATH.write_text(json.dumps(s, indent=2), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# Windows power management (for unattended auto-trading on a laptop)
+#
+# Goal: a laptop that hibernates overnight (zero network exposure) can wake on
+# a scheduled timer at ~09:00 ET, be held awake by the monitor through the
+# session, then hibernate again a few minutes after the close. All functions
+# below are no-ops off Windows so nothing changes on other machines.
+# --------------------------------------------------------------------------
+
+_ES_CONTINUOUS = 0x80000000
+_ES_SYSTEM_REQUIRED = 0x00000001
+
+
+def _set_wakelock(on: bool) -> None:
+    """Assert (or release) a 'system required' lock so Windows won't idle-sleep
+    the machine while the monitor is trading."""
+    if sys.platform != "win32":
+        return
+    ctypes.windll.kernel32.SetThreadExecutionState(
+        _ES_CONTINUOUS | (_ES_SYSTEM_REQUIRED if on else 0)
+    )
+
+
+def _idle_seconds() -> float:
+    """Seconds since the last keyboard/mouse input (Windows). Returns 0 off
+    Windows, so any 'only when the user is away' gate simply never fires."""
+    if sys.platform != "win32":
+        return 0.0
+    class _LII(ctypes.Structure):
+        _fields_ = [("cbSize", ctypes.c_uint), ("dwTime", ctypes.c_uint)]
+    lii = _LII()
+    lii.cbSize = ctypes.sizeof(lii)
+    if not ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lii)):
+        return 0.0
+    return (ctypes.windll.kernel32.GetTickCount() - lii.dwTime) / 1000.0
+
+
+def _hibernate() -> None:
+    """Hibernate the machine now (Windows; needs `powercfg /hibernate on`)."""
+    if sys.platform == "win32":
+        os.system("shutdown /h")
 
 
 def toasts_enabled() -> bool:
@@ -836,6 +882,8 @@ class AlertMonitor:
         self._flattened_date: str | None = None
         self._reconciled_key: str | None = None
         self.started_at: str | None = None
+        self._wakelock_on: bool = False
+        self._hibernated_date: str | None = None
 
     # -- public API --------------------------------------------------------
 
@@ -963,9 +1011,57 @@ class AlertMonitor:
                 d -= timedelta(days=1)
         return d.strftime("%Y-%m-%d")
 
+    def _manage_power(self, now: datetime) -> None:
+        """Keep the machine awake during the session, and (opt-in) hibernate it
+        after the close when the user is away -- so an unattended laptop can run
+        the whole day and then drop to zero network exposure. No-op off Windows.
+
+        Auto-hibernate (``hibernate_after_close`` in app_settings.json, default
+        on) is deliberately conservative: weekdays only, after 16:20 ET, once a
+        day, never when this monitor only launched after the close (an evening
+        review session), and only when the keyboard has been idle 5+ minutes so
+        it never yanks the machine out from under active use.
+        """
+        hm = now.strftime("%H:%M")
+        today = now.strftime("%Y-%m-%d")
+        weekday = now.weekday() < 5
+
+        # Hold awake 09:15-16:20 ET (pre-open autopick through post-close sweep).
+        want_awake = (weekday and "09:15" <= hm < "16:20"
+                      and _settings().get("wakelock_enabled", True))
+        if want_awake != self._wakelock_on:
+            try:
+                _set_wakelock(want_awake)
+                self._wakelock_on = want_awake
+                print("[alert] wake-lock " + ("ON (held awake for the session)"
+                      if want_awake else "OFF (machine may sleep)"))
+            except Exception as exc:
+                print(f"[alert] wake-lock failed: {exc}")
+
+        if not _settings().get("hibernate_after_close", True):
+            return
+        if not weekday or hm < "16:20" or self._hibernated_date == today:
+            return
+        if self.started_at and self.started_at[:10] == today and self.started_at[11:16] >= "16:15":
+            return  # launched after the close -- don't hibernate a review session
+        if _idle_seconds() < 300:
+            return  # user is at the keyboard -- leave the machine alone
+        self._hibernated_date = today
+        print("[alert] post-close and idle -> hibernating (unattended auto-trade)")
+        try:
+            _set_wakelock(False)
+            self._wakelock_on = False
+            _hibernate()
+        except Exception as exc:
+            print(f"[alert] hibernate failed: {exc}")
+
     def _loop(self) -> None:
         while not self._stop.is_set():
             now = datetime.now(NY)
+            try:
+                self._manage_power(now)
+            except Exception as exc:
+                print(f"[alert] power management error: {exc}")
             # Close orphaned 0DTE rows: once on start (catches sessions the
             # monitor missed entirely) and once after each 16:10 cutoff (in
             # case the close-window polls failed). No-op when nothing is stale.
