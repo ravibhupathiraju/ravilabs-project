@@ -314,9 +314,20 @@ def set_toasts(on: bool) -> bool:
     return bool(on)
 
 
-def _toast(title: str, body: str) -> None:
+def _toast(title: str, body: str, strat_id: str | None = None,
+           symbol: str | None = None) -> None:
     """Alert the user. Popups only when enabled; the console line (and the
-    SQLite row every caller writes) happen either way, so nothing is lost."""
+    SQLite row every caller writes) happen either way, so nothing is lost.
+    Also pushed to Telegram (if configured) regardless of the popup setting --
+    that's the whole point of remote alerts when you're away from the laptop.
+    `strat_id`/`symbol` let the Telegram config filter which strategies/tickers
+    push; untagged alerts (strat_id=None) always push."""
+    try:
+        from . import telegram
+        if telegram.configured() and (strat_id is None or telegram.allowed(strat_id, symbol)):
+            telegram.send(title, body)
+    except Exception as exc:
+        print(f"[alert] telegram push failed: {exc}")
     if not toasts_enabled():
         print(f"[alert] {title} | {body}")
         return
@@ -726,6 +737,7 @@ def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
             f"SWING SIGNAL: {sig['ticker']} — {strat.label}",
             f"Close {sig['close']:.2f} on {sig['date']} | Buy at next open"
             f" | Stop ≈ {sig['stop']:.2f}{tgt} | Exit: {_swing_planned_exit(strat)}",
+            strat_id=f"swing:{key}", symbol=sig["ticker"],
         )
     # Paper order — only on a COMPLETED daily bar (market closed). Signals
     # seen intraday are provisional (partial bar) and a market order would
@@ -752,6 +764,7 @@ def _record_swing_signal(sig: dict, key: str, strat, now: datetime) -> None:
                 f"PAPER ORDER: {sig['ticker']} {order['qty']} shares — {strat.label}",
                 f"~${order['notional']:,.0f} bracket buy sent to Alpaca paper"
                 f" (fills at next open) | Stop {sig['stop']:.2f}",
+                strat_id=f"swing:{key}", symbol=sig["ticker"],
             )
 
 
@@ -812,6 +825,7 @@ def _track_swing_positions(earnings_buffer: int, now: datetime) -> None:
                     f"SWING ENTRY: {ticker} @ {entry:.2f} — {strat.label}",
                     f"Filled at the {str(entry_ts.date())} open"
                     f" | Stop {stop:.2f}{tgt_txt}",
+                    strat_id=f"swing:{row['strategy']}", symbol=ticker,
                 )
 
             if row["status"] != "open":
@@ -847,6 +861,7 @@ def _track_swing_positions(earnings_buffer: int, now: datetime) -> None:
                     f"Exit {str(df.index[j].date())} @ {exit_price:.2f}"
                     f" (entered {row['entry_time']} @ {row['entry_price']:.2f})"
                     f" — {strat.label}",
+                    strat_id=f"swing:{row['strategy']}", symbol=ticker,
                 )
                 # Flatten the mirrored paper position. Safe for stop/target
                 # exits too: the bracket leg usually filled broker-side
@@ -1284,6 +1299,7 @@ class AlertMonitor:
                         _toast(
                             f"PATTERN {p['side'].upper()} {p['win_pct']}%: {tkr} @ {P:.2f}",
                             f"{p['label']} → target {tgt:.2f} / stop {stop:.2f}{paper}",
+                            strat_id="pattern", symbol=tkr,
                         )
             self._settle_pattern_trades(tkr, now)
 
@@ -1395,6 +1411,7 @@ class AlertMonitor:
                     f"0DTE ENTRY{nth}: {sym} {label} ({res['direction'].upper()})",
                     f"Entry {res['entry_time']} @ {res['entry_price']:.2f}{stop_txt}"
                     f" | Exit: {PLANNED_EXITS.get(name, SESSION_END)}",
+                    strat_id=f"0dte:{name}", symbol=sym,
                 )
                 row = con.execute(
                     """SELECT id, status, broker_order_id FROM alerts
@@ -1437,6 +1454,7 @@ class AlertMonitor:
                             f"{order['qty']} shares — {label}",
                             f"~${order['notional']:,.0f} market order sent to Alpaca paper"
                             f" | Exit: {PLANNED_EXITS.get(name, SESSION_END)}",
+                            strat_id=f"0dte:{name}", symbol=sym,
                         )
 
             if row["status"] == "open" and res.get("exited"):
@@ -1450,6 +1468,7 @@ class AlertMonitor:
                     f"0DTE EXIT{nth}: {sym} {label} {'+' if pnl >= 0 else ''}{pnl:.2f}%",
                     f"Exit {res['exit_time']} @ {res['exit_price']:.2f}"
                     f" (entered {res['entry_time']} @ {res['entry_price']:.2f})",
+                    strat_id=f"0dte:{name}", symbol=sym,
                 )
                 if row["broker_order_id"]:
                     # VWAP touched, or the session ended

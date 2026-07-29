@@ -16,7 +16,14 @@
 $Project  = "C:\Ravi\fable\swing\ravilabs-project"
 $Py       = "C:\Users\ravib\AppData\Local\Python\pythoncore-3.14-64\pythonw.exe"
 $TaskName = "SwingTracker-AutoTrade"
-$WakeAt   = "9:00AM"     # local time; a bit before the 9:30 ET open
+
+# Wake ~30 min before the 9:30 ET open = 9:00 AM EASTERN, expressed in THIS
+# machine's LOCAL time (Task Scheduler triggers fire in local time). This is
+# correct on any timezone: on Pacific it resolves to 06:00, on Eastern 09:00.
+$etZone    = [System.TimeZoneInfo]::FindSystemTimeZoneById("Eastern Standard Time")
+$et9       = [DateTime]::SpecifyKind((Get-Date).Date.AddHours(9), 'Unspecified')
+$WakeLocal = [System.TimeZoneInfo]::ConvertTime($et9, $etZone, [System.TimeZoneInfo]::Local)
+$WakeAt    = $WakeLocal.ToString("HH:mm")   # local HH:mm for 9:00 AM ET
 
 function Step($m) { Write-Host "`n=> $m" -ForegroundColor Cyan }
 

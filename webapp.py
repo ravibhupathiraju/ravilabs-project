@@ -322,6 +322,8 @@ def _laptop_config() -> dict:
         "is_windows": sys.platform == "win32",
         "hibernate_after_close": bool(s.get("hibernate_after_close", True)),
         "wakelock_enabled": bool(s.get("wakelock_enabled", True)),
+        "pattern_autostart": bool(s.get("pattern_autostart", True)),
+        "pattern_on": MONITOR.pattern_on,
         "monitor_running": MONITOR.running,
         "wakelock_on": MONITOR._wakelock_on,
         "hibernated_date": MONITOR._hibernated_date,
@@ -336,13 +338,88 @@ def api_laptop_config():
     return jsonify(_laptop_config())
 
 
+@app.get("/api/laptop/quicktest")
+def api_quicktest_status():
+    from swingtrader import quicktest
+    return jsonify(quicktest.status())
+
+
+@app.post("/api/laptop/quicktest/start")
+def api_quicktest_start():
+    from swingtrader import quicktest
+    payload = request.get_json(silent=True) or {}
+    try:
+        return jsonify(quicktest.start(int(payload.get("minutes") or 2)))
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.post("/api/laptop/quicktest/clear")
+def api_quicktest_clear():
+    from swingtrader import quicktest
+    return jsonify(quicktest.clear())
+
+
+@app.get("/api/telegram")
+def api_telegram_status():
+    from swingtrader import telegram
+    return jsonify(telegram.config())
+
+
+@app.post("/api/telegram")
+def api_telegram_save():
+    from swingtrader import telegram
+    p = request.get_json(force=True)
+    return jsonify(telegram.save(
+        token=p.get("token"), chat_id=p.get("chat_id"), enabled=p.get("enabled")))
+
+
+@app.post("/api/telegram/detect")
+def api_telegram_detect():
+    from swingtrader import telegram
+    p = request.get_json(silent=True) or {}
+    cid = telegram.detect_chat_id(p.get("token"))
+    if not cid:
+        return jsonify({"error": "No message found. Send your bot a message in "
+                                 "Telegram first, then click Detect."}), 400
+    return jsonify({"chat_id": cid})
+
+
+@app.post("/api/telegram/test")
+def api_telegram_test():
+    from swingtrader import telegram
+    p = request.get_json(silent=True) or {}
+    ok = telegram.test(token=p.get("token"), chat_id=p.get("chat_id"))
+    if not ok:
+        return jsonify({"error": "Send failed. Check the token and chat ID."}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/telegram/strategies")
+def api_telegram_strategies():
+    from swingtrader import telegram
+    return jsonify({"strategies": telegram.strategies()})
+
+
+@app.post("/api/telegram/strategies")
+def api_telegram_strategies_set():
+    from swingtrader import telegram
+    p = request.get_json(force=True)
+    return jsonify({"strategies": telegram.set_filter(
+        p.get("id"), enabled=p.get("enabled"), tickers=p.get("tickers"))})
+
+
 @app.post("/api/laptop/config")
 def api_laptop_config_set():
     from swingtrader.alerts import _settings_set
     payload = request.get_json(force=True)
-    for key in ("hibernate_after_close", "wakelock_enabled"):
+    for key in ("hibernate_after_close", "wakelock_enabled", "pattern_autostart"):
         if key in payload:
             _settings_set(key, bool(payload[key]))
+    # pattern_autostart also flips the LIVE pattern watch on/off immediately,
+    # not just at the next boot, so the toggle has an instant effect.
+    if "pattern_autostart" in payload:
+        alerts.MONITOR.start(configure=("pattern",), pattern_on=bool(payload["pattern_autostart"]))
     return jsonify(_laptop_config())
 
 
@@ -598,10 +675,24 @@ def _autostart_monitors() -> None:
             swing_strategies=list(STRATEGIES),
             configure=("zerodte", "swing"),
         )
+        # Pattern watch auto-starts unless the user turned it off (persisted),
+        # so armed patterns keep alerting/trading across restarts & the wake
+        # cycle -- otherwise pattern_on resets to off on every boot.
+        from swingtrader.alerts import _settings
+        if _settings().get("pattern_autostart", True):
+            alerts.MONITOR.start(configure=("pattern",), pattern_on=True)
+            print("[autostart] pattern watch on (pattern_autostart)")
         print("[autostart] monitors live: 0DTE + swing (all strategies), "
               "paper trading ready on their own accounts")
     except Exception as exc:
         print(f"[autostart] monitor failed: {exc}")
+    try:
+        # If a quick unattended-cycle test was armed, this boot IS the proof
+        # the app came back on its own -- record the result.
+        from swingtrader import quicktest
+        quicktest.on_startup()
+    except Exception as exc:
+        print(f"[autostart] quicktest check failed: {exc}")
 
 
 if __name__ == "__main__":

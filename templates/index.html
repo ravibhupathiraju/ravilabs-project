@@ -111,6 +111,7 @@ details > summary:hover { color: var(--text); }
     <button class="tab" data-tab="tvTab">TV strategy tester</button>
     <button class="tab" data-tab="actionPlanTab">Action plan</button>
     <button class="tab" data-tab="laptopTab">Laptop config</button>
+    <button class="tab" data-tab="telegramTab">Telegram config</button>
   </div>
   <button id="toastToggle" class="run secondary" data-on="0"
     style="margin-top:1rem;width:100%;font-size:0.8rem;padding:0.35rem 0.5rem"
@@ -1009,12 +1010,64 @@ Target              $95 / $100"></textarea>
       <input type="checkbox" id="cfgHibernate" style="margin-top:0.25rem;transform:scale(1.3)">
       <span><b>Auto-hibernate after the close</b> &mdash; hibernate a few minutes after 16:20 ET so off-hours the laptop is powered off (no network, minimal attack surface). <span class="note">Safe: only fires when you've been idle 5+ min, so it never interrupts active use; skips a session started after the close.</span></span>
     </label>
+    <label class="check" style="display:flex;align-items:flex-start;gap:0.7rem;cursor:pointer">
+      <input type="checkbox" id="cfgPatternAuto" style="margin-top:0.25rem;transform:scale(1.3)">
+      <span><b>Auto-start pattern alerts</b> &mdash; turn the live <b>pattern watch</b> on at launch so your armed Pattern-lab setups keep alerting/trading across restarts and the wake cycle. <span class="note">Without this the watch resets to off on every boot. Toggling here also flips it on/off right now.</span></span>
+    </label>
     <span class="status" id="cfgStatus"></span>
   </div>
 
   <p class="note" style="margin:1rem 0 0"><b>Daily cycle:</b> hibernate overnight → the scheduled task wakes it ~9:00 and launches the tracker → it stays awake and trades the session → hibernates when you step away. Keep yourself <b>logged in</b> (locking is fine) and use <b>Hibernate/Sleep</b>, never full Shut Down. Launch the app headless with <code>serve.py</code> (or <code>start-tracker.bat</code>).</p>
 </div>
+
+<div class="card">
+  <h3 style="margin-top:0">Quick test <span class="meta">&mdash; prove the full wake + auto-start cycle in ~2 minutes</span></h3>
+  <p class="note" style="margin:0.2rem 0 0.8rem">Arms a temporary 2-minute wake timer that launches the tracker, then <b>stops the app and hibernates now</b>. If the laptop wakes itself and the scheduled task <b>cold-starts the app</b>, this reports PASSED once it's back. The browser tab suspends with the machine &mdash; <b>reopen this page after it wakes</b> and the result shows below.</p>
+  <div class="actions" style="margin-bottom:0.8rem">
+    <button class="run" id="qtRunBtn">Run 2-min wake + auto-start test</button>
+    <button class="run secondary" id="qtClearBtn" style="padding:0.25rem 0.9rem;font-size:0.85rem">Clear</button>
+    <span class="status" id="qtStatus"></span>
+  </div>
+  <div id="qtLog" style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:0.85rem;background:#0f141d;border:1px solid #263042;border-radius:8px;padding:0.8rem 1rem;white-space:pre-wrap;line-height:1.5;color:#c7d0e0"></div>
+  <p class="note" style="margin:0.6rem 0 0"><b>Heads-up:</b> this hibernates your machine immediately. Save any work first. It's separate from the real 9:00 task and cleans up its temporary timer automatically.</p>
+</div>
 </div><!-- /laptopTab -->
+
+<!-- ===== Telegram config: connect the bot + per-strategy alert filter ===== -->
+<div id="telegramTab" style="display:none">
+<div class="card" style="margin-bottom:1rem">
+  <h3 style="margin-top:0">Telegram alerts <span class="meta" id="tgMeta">&mdash; get every entry / exit / pattern match on your phone</span></h3>
+  <p class="note" style="margin:0.2rem 0 0.9rem"><b>Setup:</b> in Telegram, message <b>@BotFather</b> → <code>/newbot</code> → copy the <b>token</b>. Send your new bot any message (e.g. "hi"). Paste the token below, click <b>Detect chat ID</b>, then <b>Send test</b>. Alerts then push automatically &mdash; even when desktop popups are off &mdash; so you get them when you're away.</p>
+  <div class="controls" style="padding:0;border:none;background:none;box-shadow:none;align-items:flex-end">
+    <div class="field" style="flex:1;min-width:280px">
+      <label for="tgToken">Bot token</label>
+      <input type="password" id="tgToken" placeholder="123456:ABC-… (leave blank to keep saved)" autocomplete="off">
+    </div>
+    <div class="field" style="max-width:200px">
+      <label for="tgChat">Chat ID</label>
+      <input type="text" id="tgChat" placeholder="auto-detect →">
+    </div>
+    <div class="actions">
+      <button class="run secondary" id="tgDetectBtn">Detect chat ID</button>
+    </div>
+  </div>
+  <div class="actions" style="margin-top:0.6rem;gap:0.6rem;align-items:center">
+    <button class="run" id="tgSaveBtn">Save</button>
+    <button class="run secondary" id="tgTestBtn">Send test</button>
+    <label class="note" style="cursor:pointer"><input type="checkbox" id="tgEnabled" checked> alerts enabled (master)</label>
+    <span class="status" id="tgStatus"></span>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Which strategies alert to Telegram <span class="meta">&mdash; enable/disable per strategy; add tickers to restrict</span></h3>
+  <p class="note" style="margin:0.2rem 0 0.8rem">Only these strategies push to Telegram when their box is ticked. Leave <b>Tickers</b> blank for <b>all symbols</b>, or list e.g. <code>QQQ, SPY</code> to alert only those. Saves instantly. (Analyzer, Misc and TV tester are intentionally excluded.)</p>
+  <table>
+    <thead><tr><th style="width:90px">On</th><th>Strategy</th><th style="width:110px">Group</th><th style="width:280px">Tickers (blank = all)</th></tr></thead>
+    <tbody id="tgStratBody"><tr><td colspan="4" class="note">Loading…</td></tr></tbody>
+  </table>
+</div>
+</div><!-- /telegramTab -->
 
 </div><!-- /main -->
 
@@ -1041,7 +1094,7 @@ document.querySelectorAll(".tab").forEach((btn) =>
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab", "actionPlanTab", "laptopTab"].forEach((id) => ($(id).style.display = "none"));
+    ["swingTab", "zdteTab", "alertTab", "bearTab", "analyzerTab", "patTab", "miscTab", "tvTab", "actionPlanTab", "laptopTab", "telegramTab"].forEach((id) => ($(id).style.display = "none"));
     $(btn.dataset.tab).style.display = "block";
     if (btn.dataset.tab === "swingTab") { refreshAlertStatus(); loadBroker(); }
     if (btn.dataset.tab === "zdteTab") { refreshAlertStatus(); }
@@ -1051,7 +1104,8 @@ document.querySelectorAll(".tab").forEach((btn) =>
     if (btn.dataset.tab === "miscTab" && miscChart) miscChart.main.timeScale().fitContent();
     if (btn.dataset.tab === "tvTab") { loadTv(); apRefresh(); }
     if (btn.dataset.tab === "actionPlanTab") aplanRefresh();
-    if (btn.dataset.tab === "laptopTab") laptopRefresh();
+    if (btn.dataset.tab === "laptopTab") { laptopRefresh(); qtRefresh(); }
+    if (btn.dataset.tab === "telegramTab") { tgRefresh(); tgStrategiesRefresh(); }
     refreshChannels();
   })
 );
@@ -3052,15 +3106,20 @@ function laptopTile(label, value, color) {
 async function laptopRefresh() {
   let d;
   try { d = await (await fetch("/api/laptop/config")).json(); } catch (e) { return; }
+  laptopRender(d);
+}
+function laptopRender(d) {
   $("cfgWakelock").checked = !!d.wakelock_enabled;
   $("cfgHibernate").checked = !!d.hibernate_after_close;
-  const yn = (v, on = "#38c793", off = "#9aa3b5") => v ? ["Yes", on] : ["No", off];
+  $("cfgPatternAuto").checked = !!d.pattern_autostart;
   const [monTxt, monCol] = d.monitor_running ? ["running", "#38c793"] : ["stopped", "#e5484d"];
   const task = d.scheduled_task === true ? ["set up", "#38c793"]
     : d.scheduled_task === false ? ["not set up", "#eab308"] : ["unknown", "#9aa3b5"];
   const [wlTxt, wlCol] = d.wakelock_on ? ["holding awake", "#38c793"] : ["idle/off", "#9aa3b5"];
+  const [pwTxt, pwCol] = d.pattern_on ? ["ON", "#38c793"] : ["off", "#9aa3b5"];
   $("laptopStatus").innerHTML =
     laptopTile("Monitor", monTxt, monCol) +
+    laptopTile("Pattern watch", pwTxt, pwCol) +
     laptopTile("Wake-lock now", wlTxt, wlCol) +
     laptopTile("Idle", d.idle_seconds != null ? d.idle_seconds + "s" : "—") +
     laptopTile("Scheduled task", task[0], task[1]) +
@@ -3073,14 +3132,116 @@ async function laptopSet(key, value) {
   $("cfgStatus").textContent = "Saving…";
   try {
     const d = await postJson("/api/laptop/config", { [key]: value });
-    $("cfgWakelock").checked = !!d.wakelock_enabled;
-    $("cfgHibernate").checked = !!d.hibernate_after_close;
+    laptopRender(d);   // reflect toggles + status tiles (e.g. Pattern watch flip)
     $("cfgStatus").textContent = "Saved.";
     setTimeout(() => { if ($("cfgStatus").textContent === "Saved.") $("cfgStatus").textContent = ""; }, 1500);
   } catch (e) { $("cfgStatus").textContent = "Failed to save."; }
 }
 $("cfgWakelock").addEventListener("change", (e) => laptopSet("wakelock_enabled", e.target.checked));
 $("cfgHibernate").addEventListener("change", (e) => laptopSet("hibernate_after_close", e.target.checked));
+$("cfgPatternAuto").addEventListener("change", (e) => laptopSet("pattern_autostart", e.target.checked));
+
+// ----- Telegram alerts -----
+async function tgRefresh() {
+  let d;
+  try { d = await (await fetch("/api/telegram")).json(); } catch (e) { return; }
+  $("tgChat").value = d.chat_id || "";
+  $("tgEnabled").checked = !!d.enabled;
+  if (d.token_set) $("tgToken").placeholder = "•••••• saved (leave blank to keep)";
+  $("tgMeta").innerHTML = d.configured
+    ? `<span style="color:#38c793">&mdash; connected${d.enabled ? "" : " (disabled)"}</span>`
+    : "&mdash; get every entry / exit / pattern match on your phone";
+}
+$("tgDetectBtn").addEventListener("click", async () => {
+  $("tgStatus").textContent = "Looking for your message to the bot…";
+  const d = await postJson("/api/telegram/detect", { token: $("tgToken").value.trim() });
+  if (d.error) { $("tgStatus").textContent = d.error; return; }
+  $("tgChat").value = d.chat_id;
+  $("tgStatus").textContent = "Chat ID detected — click Save.";
+});
+$("tgSaveBtn").addEventListener("click", async () => {
+  $("tgStatus").textContent = "Saving…";
+  await postJson("/api/telegram", {
+    token: $("tgToken").value.trim(), chat_id: $("tgChat").value.trim(), enabled: $("tgEnabled").checked });
+  $("tgToken").value = "";
+  await tgRefresh();
+  $("tgStatus").textContent = "Saved.";
+});
+$("tgTestBtn").addEventListener("click", async () => {
+  $("tgStatus").textContent = "Sending test…";
+  const d = await postJson("/api/telegram/test", { token: $("tgToken").value.trim(), chat_id: $("tgChat").value.trim() });
+  $("tgStatus").textContent = d.error ? d.error : "Test sent — check Telegram.";
+});
+$("tgEnabled").addEventListener("change", async (e) => {
+  await postJson("/api/telegram", { enabled: e.target.checked });
+  tgRefresh();
+});
+
+// per-strategy Telegram alert filter
+async function tgStrategiesRefresh() {
+  let d;
+  try { d = await (await fetch("/api/telegram/strategies")).json(); } catch (e) { return; }
+  const rows = d.strategies || [];
+  $("tgStratBody").innerHTML = rows.map((s) =>
+    `<tr>` +
+    `<td><input type="checkbox" class="tgStratOn" data-id="${s.id}" ${s.enabled ? "checked" : ""} style="transform:scale(1.2)"></td>` +
+    `<td>${s.label}</td>` +
+    `<td><span class="note">${s.group}</span></td>` +
+    `<td><input type="text" class="tgStratTk" data-id="${s.id}" value="${(s.tickers || "").replace(/"/g, "&quot;")}" placeholder="all" style="width:250px;text-transform:uppercase"></td>` +
+    `</tr>`).join("");
+  $("tgStratBody").querySelectorAll(".tgStratOn").forEach((cb) =>
+    cb.addEventListener("change", () => tgStratSave(cb.dataset.id, { enabled: cb.checked })));
+  $("tgStratBody").querySelectorAll(".tgStratTk").forEach((inp) => {
+    const save = () => tgStratSave(inp.dataset.id, { tickers: inp.value });
+    inp.addEventListener("change", save);   // fires on blur / Enter
+  });
+}
+async function tgStratSave(id, patch) {
+  $("tgStatus").textContent = "Saving…";
+  try {
+    await postJson("/api/telegram/strategies", { id, ...patch });
+    $("tgStatus").textContent = "Saved.";
+    setTimeout(() => { if ($("tgStatus").textContent === "Saved.") $("tgStatus").textContent = ""; }, 1200);
+  } catch (e) { $("tgStatus").textContent = "Save failed."; }
+}
+
+// ----- Quick test: full wake + auto-start cycle -----
+function qtRender(d) {
+  d = d || {};
+  const phase = d.phase || "idle";
+  const badge = phase === "passed" ? "✅ PASSED"
+    : phase === "armed" ? "⏳ ARMED (hibernating…)"
+    : "— idle";
+  const lines = [`Status: ${badge}`];
+  if (d.armed_at) lines.push(`Armed at:   ${d.armed_at.replace("T", " ")}`);
+  if (d.wake_at) lines.push(`Wake at:    ${d.wake_at.replace("T", " ")} (${d.minutes} min)`);
+  if (d.woke_app_at) lines.push(`App back:   ${d.woke_app_at.replace("T", " ")}`);
+  if (d.result) lines.push("", d.result);
+  if (phase === "idle") lines.push("No test run yet. Click the button to prove the full cycle.");
+  const col = phase === "passed" ? "#38c793" : phase === "armed" ? "#eab308" : "#9aa3b5";
+  $("qtLog").innerHTML = `<span style="color:${col};font-weight:600">${lines[0]}</span>\n` +
+    lines.slice(1).join("\n");
+}
+async function qtRefresh() {
+  try { qtRender(await (await fetch("/api/laptop/quicktest")).json()); } catch (e) {}
+}
+$("qtRunBtn").addEventListener("click", async () => {
+  if (!confirm("This will STOP the app and HIBERNATE your laptop right now.\nIt should wake itself and cold-start the tracker in ~2 minutes.\n\nSave any work first. Continue?")) return;
+  $("qtStatus").textContent = "Arming… the machine will hibernate in a few seconds.";
+  try {
+    const d = await postJson("/api/laptop/quicktest/start", { minutes: 2 });
+    if (d.error) { $("qtStatus").textContent = "Error: " + d.error; return; }
+    qtRender(d);
+    $("qtStatus").textContent = "Armed — hibernating now. Reopen this page after it wakes.";
+  } catch (e) {
+    // the app exits mid-request by design, so a network error here is expected
+    $("qtStatus").textContent = "Armed — hibernating now. Reopen this page after it wakes.";
+  }
+});
+$("qtClearBtn").addEventListener("click", async () => {
+  try { qtRender(await postJson("/api/laptop/quicktest/clear", {})); } catch (e) {}
+  $("qtStatus").textContent = "";
+});
 
 const tvMoney = (v) => v == null ? "—" : "$" + (+v).toFixed(2);
 const tvPl = (v) => v == null ? "—" :
