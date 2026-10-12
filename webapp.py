@@ -9,8 +9,11 @@ import re
 
 from flask import Flask, jsonify, render_template, request
 
-from swingtrader import backtest, screener, zerodte
+from swingtrader import backtest, daytrade, screener, zerodte
 from swingtrader.data import parse_duration
+from swingtrader.daytrade.filters import FILTERS as DAYTRADE_FILTERS
+from swingtrader.daytrade.report import STOP_PCT, TARGET_PCT
+from swingtrader.daytrade.universe import UNIVERSE as DAYTRADE_UNIVERSE
 from swingtrader.strategies import STRATEGIES
 from swingtrader.universe import get_universe, universe_options
 
@@ -111,6 +114,52 @@ def api_zerodte():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(data)
+
+
+# --- Day-trade scanner: separate page, separate API ---
+
+
+@app.route("/daytrade")
+def daytrade_page():
+    return render_template(
+        "daytrade.html",
+        universe_size=len(DAYTRADE_UNIVERSE),
+        target=TARGET_PCT,
+        stop=STOP_PCT,
+        filters=[{"key": k, "label": label} for k, (label, _) in DAYTRADE_FILTERS.items()],
+    )
+
+
+@app.post("/api/daytrade/backtest")
+def api_daytrade_backtest():
+    payload = request.get_json(force=True)
+    if payload.get("universe") == "custom":
+        raw = payload.get("tickers", "")
+        tickers = [t.upper() for t in re.split(r"[,\s]+", raw) if t.strip()]
+        if not tickers:
+            return jsonify({"error": "no tickers entered"}), 400
+    else:
+        tickers = list(DAYTRADE_UNIVERSE)
+    limit = int(payload.get("limit") or 0)
+    if limit > 0:
+        tickers = tickers[:limit]
+    try:
+        target = float(payload.get("target") or TARGET_PCT)
+        stop = float(payload.get("stop") or STOP_PCT)
+    except (TypeError, ValueError):
+        return jsonify({"error": "take profit and stop must be numbers"}), 400
+    if target <= 0 or stop <= 0:
+        return jsonify({"error": "take profit and stop must be positive"}), 400
+    res = daytrade.run_backtest(
+        tickers,
+        filters=payload.get("filters") or None,
+        target=target,
+        stop=stop,
+        refresh=not payload.get("cached"),
+        wide_bands=bool(payload.get("wide_bands")),
+    )
+    res.pop("_signals", None)
+    return jsonify(res)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ h3 { margin-top: 2rem; }
 .tabs { display: flex; gap: 0.5rem; margin: 1.25rem 0; }
 .tab { background: #171f30; color: #9aa3b5; border: 1px solid #263042; border-radius: 8px 8px 0 0; padding: 10px 18px; cursor: pointer; font-size: 0.95rem; }
 .tab.active { background: #4f8ef7; color: #fff; border-color: #4f8ef7; }
+.tablink { margin-left: auto; align-self: center; color: #4f8ef7; text-decoration: none; font-size: 0.95rem; }
 .card { background: #171f30; border-radius: 10px; padding: 1.25rem; }
 .controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
 .field { display: flex; flex-direction: column; gap: 0.35rem; }
@@ -42,6 +43,7 @@ th { color: #9aa3b5; text-transform: uppercase; font-size: 0.75rem; letter-spaci
 <div class="tabs">
   <button class="tab active" data-tab="swingTab">Swing strategies</button>
   <button class="tab" data-tab="zdteTab">0DTE intraday</button>
+  <a class="tablink" href="/daytrade">Day trade scanner &rarr;</a>
 </div>
 
 <!-- ============ SWING TAB ============ -->

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Day Trade Scanner</title>
+<style>
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 2rem auto; max-width: 1100px; padding: 0 1rem; background: #0f1420; color: #e6e9f0; }
+h1 { margin-bottom: 0.2rem; }
+h3 { margin-top: 2rem; }
+a { color: #4f8ef7; }
+.meta { color: #9aa3b5; margin-top: 0; }
+.card { background: #171f30; border-radius: 10px; padding: 1.25rem; }
+.controls { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; }
+.field { display: flex; flex-direction: column; gap: 0.35rem; }
+.field.wide { grid-column: 1 / -1; }
+label { color: #9aa3b5; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; }
+select, input, textarea { background: #0f1420; color: #e6e9f0; border: 1px solid #263042; border-radius: 6px; padding: 8px 10px; font-size: 0.95rem; }
+.checks { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; }
+.check { color: #e6e9f0; font-size: 0.9rem; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 0.4rem; }
+.actions { grid-column: 1 / -1; display: flex; align-items: center; gap: 1rem; }
+button.run { background: #4f8ef7; color: #fff; border: none; border-radius: 6px; padding: 10px 18px; font-size: 0.95rem; cursor: pointer; }
+button:disabled { opacity: 0.5; cursor: wait; }
+.status { color: #f0b429; font-size: 0.9rem; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { padding: 7px 10px; text-align: right; border-bottom: 1px solid #263042; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+td:first-child { font-weight: 600; }
+th { color: #9aa3b5; text-transform: uppercase; font-size: 0.72rem; letter-spacing: 0.05em; }
+.call { color: #22d47a; }
+.put { color: #f0509a; }
+.pos { color: #22d47a; }
+.neg { color: #f0506a; }
+.muted { color: #9aa3b5; }
+.note { color: #9aa3b5; font-size: 0.85rem; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover td { background: #1c2538; }
+@media (max-width: 720px) { .controls { grid-template-columns: 1fr 1fr; } }
+</style>
+</head>
+<body>
+<h1>Day Trade Scanner</h1>
+<p class="meta">Intraday relative-strength signals replayed on 5-minute bars, with every filter scored &nbsp;·&nbsp; <a href="/">&larr; Swing &amp; 0DTE</a></p>
+
+<div class="card controls">
+  <div class="field">
+    <label for="universe">Universe</label>
+    <select id="universe">
+      <option value="builtin">Built-in day-trade list ({{ universe_size }})</option>
+      <option value="custom">Custom tickers</option>
+    </select>
+  </div>
+  <div class="field">
+    <label for="limit">Max tickers (0 = all)</label>
+    <input id="limit" type="number" min="0" value="0">
+  </div>
+  <div class="field">
+    <label for="target">Take profit % (stock)</label>
+    <input id="target" type="number" step="0.25" min="0.25" value="{{ target }}">
+  </div>
+  <div class="field">
+    <label for="stop">Stop loss % (stock)</label>
+    <input id="stop" type="number" step="0.25" min="0.25" value="{{ stop }}">
+  </div>
+  <div class="field wide" id="customField" style="display:none">
+    <label for="tickers">Tickers (comma or space separated)</label>
+    <textarea id="tickers" rows="2" placeholder="COHR LITE AAOI MARA RIOT ..."></textarea>
+  </div>
+  <div class="field wide">
+    <label>Filters to score</label>
+    <div class="checks">
+      {% for f in filters %}
+      <label class="check"><input type="checkbox" class="flt" value="{{ f.key }}" checked {% if f.key == 'all' %}disabled{% endif %}> {{ f.label }}</label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="actions">
+    <button class="run" id="runBtn">Run backtest</button>
+    <label class="check"><input type="checkbox" id="cached"> Use cached bars only</label>
+    <label class="check" title="Default triggers at iRS >= 95 (calls) / <= 5 (puts). Wide also records the 90-94 and 6-10 bands."><input type="checkbox" id="wide"> Wide bands (90 / 10)</label>
+    <span class="status" id="status"></span>
+  </div>
+</div>
+
+<div id="results" style="display:none">
+  <p class="note" id="summary"></p>
+
+  <h3>RS profile: where signals fired</h3>
+  <div class="tablewrap"><table id="profileTbl"></table></div>
+
+  <h3>Filters vs baseline</h3>
+  <p class="note">Each row only keeps signals that pass the filter. Compare hit % and sim expectancy against the baseline row for the same side.</p>
+  <div class="tablewrap"><table id="filterTbl"></table></div>
+
+  <h3>By time of first signal</h3>
+  <div class="tablewrap"><table id="timeTbl"></table></div>
+
+  <h3>Daily scorecard</h3>
+  <p class="note">Click a day for its top runners.</p>
+  <div class="tablewrap"><table id="dailyTbl"></table></div>
+</div>
+
+<p class="note">
+  <b>Hit +2%</b> = the stock moved at least 2% in the trade's direction at some point after the signal, before the close.
+  <b>Best / worst</b> = average maximum favorable / adverse move after entry.
+  <b>Sim</b> = exit at the take-profit or stop (stop assumed first when one bar touches both), else at the close; in % of the stock, not option prices.
+  Free 5-minute data covers ~60 days; the local cache keeps everything downloaded, so history grows with each run. Educational use only; not financial advice.
+</p>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const pct = (v, d = 2) => (v == null ? "--" : `<span class="${v > 0 ? "pos" : v < 0 ? "neg" : ""}">${v > 0 ? "+" : ""}${v.toFixed(d)}%</span>`);
+const num = (v) => (v == null ? "--" : v);
+const sideCls = (label) => (label.startsWith("CALL") || label === "call" ? "call" : "put");
+const STAT_HEAD = "<th>Signals</th><th>Hit +2%</th><th>Best</th><th>Worst</th><th>Close</th><th>Sim win</th><th>Sim exp.</th><th>Sim PF</th>";
+const statCells = (r) => r.n
+  ? `<td>${r.n}</td><td>${r.hit_pct}%</td><td>${pct(r.avg_mfe)}</td><td>${pct(r.avg_mae)}</td><td>${pct(r.avg_close)}</td>` +
+    `<td>${r.sim_win_pct}%</td><td>${pct(r.sim_expectancy, 3)}</td><td>${num(r.sim_profit_factor)}</td>`
+  : `<td>0</td><td colspan="7" class="muted">no signals</td>`;
+
+$("universe").addEventListener("change", () => {
+  $("customField").style.display = $("universe").value === "custom" ? "flex" : "none";
+});
+
+$("runBtn").addEventListener("click", async () => {
+  const body = {
+    universe: $("universe").value,
+    tickers: $("tickers").value,
+    limit: Number($("limit").value) || 0,
+    target: Number($("target").value),
+    stop: Number($("stop").value),
+    cached: $("cached").checked,
+    wide_bands: $("wide").checked,
+    filters: [...document.querySelectorAll(".flt:checked")].map((c) => c.value),
+  };
+  $("runBtn").disabled = true;
+  $("status").textContent = "Running... the first download of ~300 tickers can take several minutes.";
+  try {
+    const res = await fetch("/api/daytrade/backtest", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    render(data);
+    $("status").textContent = "";
+  } catch (err) {
+    $("status").textContent = `Error: ${err.message}`;
+  } finally {
+    $("runBtn").disabled = false;
+  }
+});
+
+function render(d) {
+  $("results").style.display = "block";
+  $("summary").innerHTML =
+    `${d.sessions} sessions · ${d.signals} signals · ${d.tickers_with_data}/${d.tickers_requested} tickers with data · ` +
+    `exit rule +${d.target_pct}% / −${d.stop_pct}% else close · trigger ${d.wide_bands ? "iRS ≥ 90 / ≤ 10" : "iRS ≥ 95 / ≤ 5"}`;
+  if (!d.signals) {
+    $("summary").innerHTML += ` · <span class="status">No signals. Check that market data downloaded (see server log).</span>`;
+  }
+
+  $("profileTbl").innerHTML = `<thead><tr><th>RS band at signal</th>${STAT_HEAD}</tr></thead><tbody>` +
+    d.rs_profile.map((r) => `<tr><td class="${sideCls(r.group)}">${r.group}</td>${statCells(r)}</tr>`).join("") + "</tbody>";
+
+  $("filterTbl").innerHTML = `<thead><tr><th>Filter</th><th>Side</th>${STAT_HEAD}</tr></thead><tbody>` +
+    d.filters.map((r) => `<tr><td>${r.label}</td><td class="${r.side}">${r.side.toUpperCase()}S</td>${statCells(r)}</tr>`).join("") + "</tbody>";
+
+  $("timeTbl").innerHTML = `<thead><tr><th>Side · first seen</th>${STAT_HEAD}</tr></thead><tbody>` +
+    d.by_time.map((r) => `<tr><td class="${sideCls(r.group)}">${r.group}</td>${statCells(r)}</tr>`).join("") + "</tbody>";
+
+  const tbl = $("dailyTbl");
+  tbl.innerHTML = "<thead><tr><th>Date</th><th>Calls</th><th>Puts</th><th>Call hit +2%</th><th>Put hit +2%</th></tr></thead>";
+  const body = document.createElement("tbody");
+  d.daily.slice().reverse().forEach((day) => {
+    const tr = document.createElement("tr");
+    tr.className = "clickable";
+    tr.innerHTML = `<td>${day.date}</td><td>${day.calls}</td><td>${day.puts}</td>` +
+      `<td>${day.call_hit_pct == null ? "--" : day.call_hit_pct + "%"}</td><td>${day.put_hit_pct == null ? "--" : day.put_hit_pct + "%"}</td>`;
+    const detail = document.createElement("tr");
+    detail.style.display = "none";
+    const rows = day.top_runners.map((s) =>
+      `<tr><td>${s.ticker}</td><td class="${s.side}">${s.side.toUpperCase()}</td><td>${s.time}</td><td>$${s.entry.toFixed(2)}</td>` +
+      `<td>${s.irs}</td><td>${s.r5}</td><td>${s.r20}</td><td>${pct(s.day_pct, 1)}</td><td>${pct(s.mfe, 1)}</td><td>${pct(s.mae, 1)}</td><td>${pct(s.close_ret, 1)}</td><td class="muted">${s.theme}</td></tr>`).join("");
+    detail.innerHTML = `<td colspan="5"><table style="margin:0.25rem 0 0.75rem">` +
+      "<thead><tr><th>Ticker</th><th>Side</th><th>1st seen</th><th>Entry</th><th>iRS</th><th>5D</th><th>20D</th><th>Day%</th><th>Best</th><th>Worst</th><th>Close</th><th>Theme</th></tr></thead>" +
+      `<tbody>${rows}</tbody></table></td>`;
+    tr.addEventListener("click", () => {
+      detail.style.display = detail.style.display === "none" ? "table-row" : "none";
+    });
+    body.append(tr, detail);
+  });
+  tbl.append(body);
+}
+</script>
+</body>
+</html>
